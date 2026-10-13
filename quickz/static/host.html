@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quickz - host console</title>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<script>try { var p = localStorage.getItem('quickz:theme') || 'auto'; document.documentElement.dataset.theme = (p === 'dark' || (p === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches)) ? 'dark' : 'light'; } catch (e) { document.documentElement.dataset.theme = 'dark'; }</script>
+<link rel="stylesheet" href="/static/css/base.css">
+<link rel="stylesheet" href="/static/css/host.css">
+</head>
+<body class="host">
+<header class="topbar" id="topbar" hidden></header>
+<div id="net" class="net" hidden role="status">Connection lost - reconnecting…</div>
+<main id="view" class="view"></main>
+<script src="/static/js/common.js"></script>
+<script src="/static/js/rich.js"></script>
+<script src="/static/js/editor.js"></script>
+<script src="/static/js/host.js"></script>
+</body>
+</html>

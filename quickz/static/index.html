@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quickz - join a game</title>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<script>try { var p = localStorage.getItem('quickz:theme') || 'auto'; document.documentElement.dataset.theme = (p === 'dark' || (p === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches)) ? 'dark' : 'light'; } catch (e) { document.documentElement.dataset.theme = 'light'; }</script>
+<link rel="stylesheet" href="/static/css/base.css">
+<style>
+  body { min-height: 100dvh; display: flex; flex-direction: column; }
+  main { flex: 1; display: grid; place-items: center; padding: 24px 16px; }
+  .wrap { width: min(420px, 100%); text-align: center; }
+  .wrap .logo { font-size: 1.8rem; margin-bottom: 1.6rem; }
+  form { text-align: left; padding: 1.6rem; box-shadow: var(--shadow); border-radius: var(--r-xl); }
+  form h1 { font-size: 1.4rem; margin-bottom: .25rem; }
+  .code { font: 700 2.2rem/1 var(--font-display); letter-spacing: .35em; text-align: center; padding: .55em .3em .55em .65em; margin: 1rem 0 .3rem; }
+  .host-link { margin-top: 1.4rem; font-size: .9rem; color: var(--text-muted); }
+</style>
+</head>
+<body>
+<main>
+  <div class="wrap">
+    <div class="logo-wrap"></div>
+    <form class="card" id="f" novalidate>
+      <h1>Join a game</h1>
+      <p class="muted">Enter the code shown on the big screen.</p>
+      <input id="code" class="input code" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" maxlength="6" placeholder="00000" aria-label="Game code" autofocus>
+      <p class="error-text" id="err" role="alert"></p>
+      <button class="btn primary lg block" type="submit">Join</button>
+    </form>
+    <p class="host-link">Hosting a quiz? <a href="/host">Open the host console</a></p>
+  </div>
+</main>
+<div id="foot"></div>
+<script src="/static/js/common.js"></script>
+<script>
+  $('.logo-wrap').append(el('div', { class: 'center' }, logo()));
+  $('#foot').append(siteFooter());
+  $('#code').addEventListener('input', e => { e.target.value = e.target.value.replace(/\D/g, ''); });
+  $('#f').addEventListener('submit', async e => {
+    e.preventDefault();
+    const code = $('#code').value.trim();
+    if (!code) { $('#err').textContent = 'Enter the game code first.'; return; }
+    try {
+      await api('/api/game/' + encodeURIComponent(code));
+      location.href = '/j/' + encodeURIComponent(code);
+    } catch (err) { $('#err').textContent = err.status === 404 ? 'No game with that code. Check it and try again.' : err.message; }
+  });
+</script>
+</body>
+</html>

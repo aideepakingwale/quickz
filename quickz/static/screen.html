@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quickz - projector</title>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<script>try { var p = localStorage.getItem('quickz:theme') || 'light'; document.documentElement.dataset.theme = (p === 'dark') ? 'dark' : 'light'; } catch (e) { document.documentElement.dataset.theme = 'light'; }</script>
+<link rel="stylesheet" href="/static/css/base.css">
+<link rel="stylesheet" href="/static/css/screen.css">
+</head>
+<body class="screen">
+<div class="stage" id="stage">
+  <header class="s-top">
+    <a class="logo" href="/host" tabindex="-1"><span class="mark"></span><span>Quick<b>z</b></span></a>
+    <div class="s-title truncate" id="s-title"></div>
+    <div class="s-join" id="s-join"></div>
+  </header>
+  <main class="s-main" id="main" aria-live="polite"></main>
+  <div id="s-foot"></div>
+</div>
+<div class="splash hidden" id="splash" role="alert"></div>
+<div class="s-tools" id="tools">
+  <button class="btn sm" id="sound-btn" type="button"></button>
+  <button class="btn sm" id="theme-btn" type="button" aria-label="Toggle light/dark (D)"></button>
+  <button class="btn sm" id="fs-btn" type="button" aria-label="Fullscreen (F)"></button>
+</div>
+<script src="/static/js/common.js"></script>
+<script src="/static/js/screen.js"></script>
+</body>
+</html>

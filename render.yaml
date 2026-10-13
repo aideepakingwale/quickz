@@ -1,0 +1,25 @@
+# Render Blueprint: New + > Blueprint, point it at your repo. See docs/DEPLOY.md.
+services:
+  - type: web
+    name: quickz
+    runtime: docker
+    plan: free
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      # Persistence: a free S3-compatible bucket (Cloudflare R2 or Backblaze B2). Render's free disk is wiped on
+      # every restart, so without these your accounts, quizzes and uploads would disappear.
+      - key: QUICKZ_S3_ENDPOINT      # R2: https://<ACCOUNT_ID>.r2.cloudflarestorage.com   B2: https://s3.<region>.backblazeb2.com
+        sync: false
+      - key: QUICKZ_S3_BUCKET
+        sync: false
+      - key: QUICKZ_S3_KEY_ID
+        sync: false
+      - key: QUICKZ_S3_SECRET
+        sync: false
+      - key: QUICKZ_S3_REGION        # R2: auto   B2: the region in your endpoint, e.g. us-west-004
+        value: auto
+      - key: QUICKZ_S3_PREFIX
+        value: quickz
+      - key: QUICKZ_MAX_MEDIA_MB     # free tiers have small disks/bandwidth: keep clips short
+        value: "15"
