@@ -72,6 +72,7 @@ Re-run the test against your own deployment's numbers with `tools/loadtest.py` (
 
 | Symptom | Cause / fix |
 |---|---|
+| Log says `SignatureDoesNotMatch` | The secret key (or key id) is wrong. R2: use the **Secret Access Key** shown once when you create the API token (not the "token value"). B2: use the application key itself, with its keyID as the key id. Re-paste both without spaces, and keep the key's permission at *Object Read & Write* for this bucket. The log line also prints the region/endpoint/lengths it used. |
 | Service won't start, log says *Refusing to start with an empty database* | The bucket couldn't be read (wrong key, endpoint or region). Fix the `QUICKZ_S3_*` values. This protects your data. |
 | Cloud backup card says *last error* | Bucket unreachable or key lacks write permission. The game keeps running; it retries every 10 s. |
 | Everyone signed out after a restart | Shouldn't happen (sessions are in the database). Check the backup card is green. |

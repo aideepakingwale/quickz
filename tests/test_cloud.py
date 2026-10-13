@@ -217,3 +217,35 @@ def test_upload_route_rejects_odd_names(client):
     for bad in ("..%2f..%2fetc%2fpasswd", "x.png", "0123456789abcdef.exe!", "0123456789abcdef", "%2e%2e", "0123456789ABCDEF.png"):
         assert client.get(f"/uploads/{bad}").status_code == 404, bad
     assert client.get("/uploads/0123456789abcdef.png").status_code == 404     # well-formed but absent
+
+
+# ------------------------------------------------------------------ configuration forgiveness
+def test_sigv4_matches_the_published_aws_example():
+    h = sign_v4("GET", "examplebucket.s3.amazonaws.com", "/test.txt", {"range": "bytes=0-9"}, hashlib.sha256(b"").hexdigest(),
+                "AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "us-east-1", "20130524T000000Z")
+    assert h["authorization"].endswith("Signature=f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41")
+
+
+def test_region_comes_from_the_endpoint():
+    from quickz.cloud import region_for
+    assert region_for("s3.us-west-004.backblazeb2.com", "auto") == "us-west-004"
+    assert region_for("s3.eu-central-003.backblazeb2.com") == "eu-central-003"
+    assert region_for("abc123.r2.cloudflarestorage.com", "us-east-1") == "auto"
+    assert region_for("minio.local:9000", "eu-west-1") == "eu-west-1"
+    assert region_for("minio.local:9000") == "auto"
+
+
+def test_env_values_are_cleaned(monkeypatch):
+    for k, v in {"QUICKZ_S3_ENDPOINT": " https://s3.us-west-004.backblazeb2.com/my-bucket \n", "QUICKZ_S3_BUCKET": " my-bucket\n",
+                 "QUICKZ_S3_KEY_ID": "'004abc'", "QUICKZ_S3_SECRET": "sekret \n"}.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.delenv("QUICKZ_S3_REGION", raising=False)
+    cfg = CloudSync.from_env().s3.cfg
+    assert (cfg.endpoint, cfg.bucket, cfg.key_id, cfg.secret, cfg.region) == (
+        "https://s3.us-west-004.backblazeb2.com", "my-bucket", "004abc", "sekret", "us-west-004")
+
+
+def test_signature_errors_explain_themselves():
+    c = S3Client(S3Config("https://x.r2.cloudflarestorage.com", "b", "id", "secret"))
+    assert "secret key is wrong" in c._hint(403, b"<Code>SignatureDoesNotMatch</Code>")
+    assert "no bucket" in c._hint(404, b"<Code>NoSuchBucket</Code>")

@@ -62,6 +62,18 @@ def sign_v4(method: str, host: str, path: str, headers: dict, payload_hash: str,
     return hdrs
 
 
+def region_for(host: str, given: str = "") -> str:
+    """The signing region. AWS and B2 endpoints name it (s3.us-west-004.backblazeb2.com), and signing with a different one
+    gives SignatureDoesNotMatch, so the endpoint wins over a missing/'auto' setting. R2 always uses 'auto'."""
+    host = host.lower()
+    if host.endswith(".r2.cloudflarestorage.com"):
+        return "auto"
+    parts = host.split(".")
+    if len(parts) >= 3 and parts[0] == "s3" and (host.endswith(".backblazeb2.com") or host.endswith(".amazonaws.com")):
+        return parts[1]
+    return given or "auto"
+
+
 @dataclass
 class S3Config:
     endpoint: str
@@ -99,7 +111,7 @@ class S3Client:
     def put(self, key: str, data: bytes, content_type: str = "application/octet-stream") -> None:
         status, body = self._call("PUT", key, data, content_type)
         if status not in (200, 201, 204):
-            raise CloudError(f"PUT {key} -> HTTP {status} {body[:200]!r}")
+            raise CloudError(f"PUT {key} -> HTTP {status} {body[:200]!r}{self._hint(status, body)}")
 
     def get(self, key: str) -> bytes | None:
         """The object's bytes, or None if it doesn't exist. Any other failure raises."""
@@ -108,7 +120,21 @@ class S3Client:
             return body
         if status == 404 or (status == 403 and b"NoSuchKey" in body):
             return None
-        raise CloudError(f"GET {key} -> HTTP {status} {body[:200]!r}")
+        raise CloudError(f"GET {key} -> HTTP {status} {body[:200]!r}{self._hint(status, body)}")
+
+    def _hint(self, status: int, body: bytes) -> str:
+        c = self.cfg
+        if b"SignatureDoesNotMatch" in body:
+            return (f" [hint: the secret key is wrong or has stray characters, or the region is wrong. Using region '{c.region}', "
+                    f"endpoint host '{self.host}', key id of {len(c.key_id)} chars and secret of {len(c.secret)} chars. "
+                    "R2 needs the S3 'Secret Access Key' of an API token (not the token value); B2 needs the application key itself.]")
+        if b"InvalidAccessKeyId" in body or b"InvalidAccessKey" in body:
+            return " [hint: the Access Key ID is wrong, or belongs to a different account/endpoint]"
+        if b"NoSuchBucket" in body:
+            return f" [hint: no bucket called '{c.bucket}' at this endpoint]"
+        if b"AccessDenied" in body:
+            return " [hint: the key has no read/write permission on this bucket]"
+        return ""
 
 
 # ---------------------------------------------------------------- the sync service
@@ -126,12 +152,18 @@ class CloudSync:
 
     @classmethod
     def from_env(cls):
-        env = os.environ
+        # Values pasted into a dashboard often carry a trailing space/newline or quotes, which silently breaks the signature.
+        env = {k: v.strip().strip("'\"").strip() for k, v in os.environ.items() if k.startswith("QUICKZ_")}
         need = ("QUICKZ_S3_ENDPOINT", "QUICKZ_S3_BUCKET", "QUICKZ_S3_KEY_ID", "QUICKZ_S3_SECRET")
         if not all(env.get(k) for k in need):
             return None
-        cfg = S3Config(env["QUICKZ_S3_ENDPOINT"].rstrip("/"), env["QUICKZ_S3_BUCKET"], env["QUICKZ_S3_KEY_ID"], env["QUICKZ_S3_SECRET"],
-                       env.get("QUICKZ_S3_REGION", "auto"), env.get("QUICKZ_S3_PREFIX", "quickz"))
+        endpoint = env["QUICKZ_S3_ENDPOINT"]
+        if "://" not in endpoint:
+            endpoint = "https://" + endpoint
+        parts = urlparse(endpoint)
+        endpoint = f"{parts.scheme}://{parts.netloc}"  # drop any /bucket path the dashboard showed next to the endpoint
+        cfg = S3Config(endpoint, env["QUICKZ_S3_BUCKET"].strip("/"), env["QUICKZ_S3_KEY_ID"], env["QUICKZ_S3_SECRET"],
+                       region_for(parts.netloc, env.get("QUICKZ_S3_REGION", "")), env.get("QUICKZ_S3_PREFIX", "quickz"))
         return cls(S3Client(cfg), float(env.get("QUICKZ_BACKUP_INTERVAL", "10")))
 
     # ---- keys
