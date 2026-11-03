@@ -1,0 +1,6 @@
+# The server runs these on Linux: keep Unix line endings whatever the editor does on Windows.
+*.sh        text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+Dockerfile  text eol=lf
+Caddyfile   text eol=lf

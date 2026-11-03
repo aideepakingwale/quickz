@@ -1,0 +1,6 @@
+# The HTTPS certificate (Let's Encrypt) is fetched and renewed automatically for $DOMAIN.
+# WebSockets (the live game) pass through reverse_proxy with no extra settings.
+{$DOMAIN} {
+	encode zstd gzip
+	reverse_proxy quickz:8000
+}

@@ -1,0 +1,238 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Quickz on ONE small EC2 instance (Ubuntu 24.04, arm64 Graviton) with automatic HTTPS (Caddy + Let's Encrypt), no SSH port
+  (use Session Manager), backups, and - optionally - pictures served from S3 through CloudFront so a big crowd never loads the server.
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: Your default VPC is fine.
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: A PUBLIC subnet in that VPC (the default VPC's subnets are public).
+  InstanceType:
+    Type: String
+    Default: t4g.micro
+    AllowedValues: [t4g.nano, t4g.micro, t4g.small, t4g.medium]
+    Description: "t4g.nano: up to ~100 players. t4g.micro (1 GB): 300-500 players (recommended). t4g.small (2 GB): 500-1000. t4g.medium: more."
+  RepoUrl:
+    Type: String
+    Description: Git address of the Quickz code. A private repo needs a read-only token in the URL (https://x-access-token:TOKEN@github.com/OWNER/REPO.git).
+  RepoBranch:
+    Type: String
+    Default: main
+  DuckDnsName:
+    Type: String
+    Default: ""
+    Description: Free name from duckdns.org, without ".duckdns.org" (leave empty if you use your own Domain and an Elastic IP).
+  DuckDnsToken:
+    Type: String
+    Default: ""
+    NoEcho: true
+    Description: The token shown on duckdns.org.
+  Domain:
+    Type: String
+    Default: ""
+    Description: Your own domain (optional). It must point at this server; with an Elastic IP that is a one-time A record.
+  SetupToken:
+    Type: String
+    Default: ""
+    NoEcho: true
+    Description: A long random string you type once on the setup page to create the Super Admin (empty = a random one is generated and shown in the setup log).
+  UseCdn:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: "true = pictures are stored in S3 and delivered by CloudFront (free for the first 1 TB a month; recommended for 300+ players). false = the server delivers them itself."
+  UseElasticIp:
+    Type: String
+    Default: "false"
+    AllowedValues: ["false", "true"]
+    Description: "false = cheapest for occasional events (the address changes when you stop/start; DuckDNS follows it). true = a fixed address, always on."
+  CreateBackupBucket:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: Make a private S3 bucket for off-server backups (pennies per month). Always created when UseCdn is true. It is kept if you delete the stack.
+  DiskGb:
+    Type: Number
+    Default: 8
+    MinValue: 8
+    MaxValue: 40
+  ImageId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id
+    Description: Leave as is (always the current Ubuntu 24.04 arm64 image).
+
+Conditions:
+  UseEip: !Equals [!Ref UseElasticIp, "true"]
+  CdnOn: !Equals [!Ref UseCdn, "true"]
+  MakeBucket: !Or [!Equals [!Ref CreateBackupBucket, "true"], !Equals [!Ref UseCdn, "true"]]
+  HasDomain: !Not [!Equals [!Ref Domain, ""]]
+
+Resources:
+  DataBucket:
+    Type: AWS::S3::Bucket
+    Condition: MakeBucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      PublicAccessBlockConfiguration: { BlockPublicAcls: true, BlockPublicPolicy: true, IgnorePublicAcls: true, RestrictPublicBuckets: true }
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-old-daily-backups
+            Status: Enabled
+            Prefix: db/daily/
+            ExpirationInDays: 60
+
+  # ---- CloudFront in front of the pictures. The bucket stays private: only this distribution may read quickz/uploads/*
+  CdnAccess:
+    Type: AWS::CloudFront::OriginAccessControl
+    Condition: CdnOn
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub "${AWS::StackName}-quickz-pictures"
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  Cdn:
+    Type: AWS::CloudFront::Distribution
+    Condition: CdnOn
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: Quickz pictures
+        HttpVersion: http2and3
+        IPV6Enabled: true
+        PriceClass: PriceClass_100              # North America + Europe edges: the cheapest class
+        Origins:
+          - Id: pictures
+            DomainName: !GetAtt DataBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt CdnAccess.Id
+            S3OriginConfig: { OriginAccessIdentity: "" }
+        DefaultCacheBehavior:
+          TargetOriginId: pictures
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD]
+          CachedMethods: [GET, HEAD]
+          Compress: true
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6     # AWS "CachingOptimized"; files are immutable and named by random IDs
+
+  CdnBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Condition: CdnOn
+    Properties:
+      Bucket: !Ref DataBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: CloudFrontMayReadPicturesOnly
+            Effect: Allow
+            Principal: { Service: cloudfront.amazonaws.com }
+            Action: "s3:GetObject"
+            Resource: !Sub "${DataBucket.Arn}/quickz/uploads/*"
+            Condition:
+              StringEquals:
+                "AWS:SourceArn": !Sub "arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${Cdn}"
+
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Quickz - web only (no SSH; use Session Manager)
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - { IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: 0.0.0.0/0, Description: "HTTP (certificate challenge and redirect to HTTPS)" }
+        - { IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: 0.0.0.0/0, Description: HTTPS }
+        - { IpProtocol: udp, FromPort: 443, ToPort: 443, CidrIp: 0.0.0.0/0, Description: HTTP/3 }
+        - { IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIpv6: "::/0", Description: HTTP over IPv6 }
+        - { IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIpv6: "::/0", Description: HTTPS over IPv6 }
+
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - { Effect: Allow, Principal: { Service: ec2.amazonaws.com }, Action: "sts:AssumeRole" }
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies: !If
+        - MakeBucket
+        - - PolicyName: quickz-bucket
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action: ["s3:PutObject", "s3:GetObject", "s3:ListBucket"]
+                  Resource: [!GetAtt DataBucket.Arn, !Sub "${DataBucket.Arn}/*"]
+        - !Ref AWS::NoValue
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref InstanceRole]
+
+  Server:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref ImageId
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref InstanceProfile
+      CreditSpecification: { CPUCredits: unlimited }   # never throttled mid-quiz; any surplus costs pennies
+      # IMDSv2 only. Hop limit 2 lets the Quickz Docker container (one network hop away) read the role's credentials.
+      MetadataOptions: { HttpTokens: required, HttpPutResponseHopLimit: 2, HttpEndpoint: enabled }
+      NetworkInterfaces:
+        - DeviceIndex: "0"
+          SubnetId: !Ref SubnetId
+          AssociatePublicIpAddress: true
+          GroupSet: [!Ref SecurityGroup]
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs: { VolumeSize: !Ref DiskGb, VolumeType: gp3, DeleteOnTermination: true, Encrypted: true }
+      Tags:
+        - { Key: Name, Value: quickz }
+      UserData:
+        Fn::Base64: !Sub
+          - |
+            #!/bin/bash
+            export DOMAIN="${Domain}" DUCKDNS_NAME="${DuckDnsName}" DUCKDNS_TOKEN="${DuckDnsToken}" SETUP_TOKEN="${SetupToken}" BACKUP_BUCKET="${Bucket}"
+            export CDN_URL="${CdnUrl}" S3_ENDPOINT="https://s3.${AWS::Region}.amazonaws.com" MAX_MEDIA_MB="25"
+            apt-get update -y && apt-get install -y git
+            git clone --depth 1 -b "${RepoBranch}" "${RepoUrl}" /opt/quickz
+            bash /opt/quickz/deploy/aws/bootstrap.sh
+          - Bucket: !If [MakeBucket, !Ref DataBucket, ""]
+            CdnUrl: !If [CdnOn, !Sub "https://${Cdn.DomainName}", ""]
+
+  ElasticIp:
+    Type: AWS::EC2::EIP
+    Condition: UseEip
+    Properties:
+      Domain: vpc
+      InstanceId: !Ref Server
+
+Outputs:
+  InstanceId:
+    Value: !Ref Server
+    Description: Stop it between events to pay almost nothing (aws ec2 stop-instances --instance-ids ...).
+  PublicIp:
+    Value: !If [UseEip, !Ref ElasticIp, !GetAtt Server.PublicIp]
+    Description: Point your own Domain's A record here (DuckDNS is updated automatically).
+  HostConsole:
+    Value: !Sub
+      - "https://${Name}/host"
+      - Name: !If [HasDomain, !Ref Domain, !Sub "${DuckDnsName}.duckdns.org"]
+    Description: Open this after about 5 minutes (the first start installs Docker and builds the app).
+  PicturesCdn:
+    Condition: CdnOn
+    Value: !Sub "https://${Cdn.DomainName}"
+    Description: Where players' phones fetch uploaded pictures from.
+  Bucket:
+    Condition: MakeBucket
+    Value: !Ref DataBucket
+  OpenAShell:
+    Value: !Sub "aws ssm start-session --target ${Server}"
+    Description: "A shell on the server without SSH. The setup log is /var/log/quickz-setup.log"

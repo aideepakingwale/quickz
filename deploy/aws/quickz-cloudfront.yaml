@@ -1,0 +1,266 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Quickz with Amazon CloudFront as the ONLY public address (https://dxxxx.cloudfront.net): no domain name, no DuckDNS, no
+  certificates to manage. One small EC2 server behind CloudFront; pictures live in S3 and are delivered by CloudFront too.
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: Your default VPC is fine.
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: A PUBLIC subnet in that VPC (the default VPC's subnets are public).
+  InstanceType:
+    Type: String
+    Default: t4g.micro
+    AllowedValues: [t4g.nano, t4g.micro, t4g.small, t4g.medium]
+    Description: "t4g.nano: up to ~100 players. t4g.micro (1 GB): 300-500 players (recommended). t4g.small (2 GB): 500-1000. t4g.medium: more."
+  RepoUrl:
+    Type: String
+    Description: Git address of the Quickz code. A private repo needs a read-only token in the URL (https://x-access-token:TOKEN@github.com/OWNER/REPO.git).
+  RepoBranch:
+    Type: String
+    Default: main
+  SetupToken:
+    Type: String
+    NoEcho: true
+    MinLength: 12
+    Description: A long random string you type once on the setup page to create the Super Admin.
+  CloudFrontPrefixListId:
+    Type: String
+    Default: ""
+    Description: "Optional hardening: the ID (pl-...) of the AWS-managed prefix list 'com.amazonaws.global.cloudfront.origin-facing' in your region (VPC console > Managed prefix lists). Empty = the server's port 80 is open to the internet but still refuses anything that did not come through CloudFront."
+  DiskGb:
+    Type: Number
+    Default: 8
+    MinValue: 8
+    MaxValue: 40
+  CustomDomain:
+    Type: String
+    Default: ""
+    AllowedPattern: '^$|^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$'
+    ConstraintDescription: a lowercase host name such as diquizbuzz.example.com (no https://, no slash)
+    Description: "Optional: your own address for the site, e.g. diquizbuzz.example.com. Needs CertificateArn too. Empty = use the dxxxx.cloudfront.net address."
+  CertificateArn:
+    Type: String
+    Default: ""
+    AllowedPattern: '^$|^arn:aws:acm:us-east-1:[0-9]{12}:certificate/.+$'
+    ConstraintDescription: must be a certificate in US East (N. Virginia) us-east-1 - CloudFront cannot use one from any other region
+    Description: "Only with CustomDomain: the ARN of an ISSUED AWS Certificate Manager certificate for exactly that name, requested in US East (N. Virginia) us-east-1 - CloudFront reads certificates only from there, whatever region this stack is in."
+  ImageId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id
+    Description: Leave as is (always the current Ubuntu 24.04 arm64 image).
+
+Rules:
+  CertificateWithDomain:
+    RuleCondition: !Not [!Equals [!Ref CustomDomain, ""]]
+    Assertions:
+      - Assert: !Not [!Equals [!Ref CertificateArn, ""]]
+        AssertDescription: CustomDomain needs CertificateArn (an issued certificate for that name in us-east-1).
+
+Conditions:
+  LockToCloudFront: !Not [!Equals [!Ref CloudFrontPrefixListId, ""]]
+  HasCustomDomain: !Not [!Equals [!Ref CustomDomain, ""]]
+  UsEast1: !Equals [!Ref "AWS::Region", us-east-1]
+
+Resources:
+  DataBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      PublicAccessBlockConfiguration: { BlockPublicAcls: true, BlockPublicPolicy: true, IgnorePublicAcls: true, RestrictPublicBuckets: true }
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-old-daily-backups
+            Status: Enabled
+            Prefix: db/daily/
+            ExpirationInDays: 60
+
+  # A fixed address is required: CloudFront needs a name to send visitors to, and a server's own name changes whenever it is stopped.
+  ElasticIp:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  ElasticIpAttachment:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      AllocationId: !GetAtt ElasticIp.AllocationId
+      InstanceId: !Ref Server
+
+  CdnAccess:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub "${AWS::StackName}-quickz-pictures"
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  Cdn:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: Quickz (the whole site + pictures)
+        HttpVersion: http2
+        IPV6Enabled: true
+        PriceClass: PriceClass_100              # North America + Europe edges: the cheapest class
+        Aliases: !If [HasCustomDomain, [!Ref CustomDomain], !Ref "AWS::NoValue"]   # your own name, if given
+        ViewerCertificate: !If
+          - HasCustomDomain
+          - { AcmCertificateArn: !Ref CertificateArn, SslSupportMethod: sni-only, MinimumProtocolVersion: TLSv1.2_2021 }
+          - !Ref "AWS::NoValue"
+        Origins:
+          - Id: app
+            DomainName: !If
+              - UsEast1
+              - !Sub ["ec2-${Dashed}.compute-1.amazonaws.com", { Dashed: !Join ["-", !Split [".", !Ref ElasticIp]] }]
+              - !Sub ["ec2-${Dashed}.${AWS::Region}.compute.amazonaws.com", { Dashed: !Join ["-", !Split [".", !Ref ElasticIp]] }]
+            CustomOriginConfig:
+              HTTPPort: 80
+              HTTPSPort: 443
+              OriginProtocolPolicy: http-only
+              OriginReadTimeout: 60
+              OriginKeepaliveTimeout: 60
+            OriginCustomHeaders:
+              - HeaderName: X-Origin-Verify          # the server refuses any request without this: nobody can bypass CloudFront
+                HeaderValue: !Select [2, !Split ["/", !Ref "AWS::StackId"]]
+          - Id: pictures
+            DomainName: !GetAtt DataBucket.RegionalDomainName
+            OriginPath: /quickz
+            OriginAccessControlId: !GetAtt CdnAccess.Id
+            S3OriginConfig: { OriginAccessIdentity: "" }
+        OriginGroups:
+          Quantity: 1
+          Items:
+            - Id: uploads                            # a picture not yet copied to S3 is fetched from the server instead
+              FailoverCriteria:
+                StatusCodes: { Quantity: 6, Items: [403, 404, 500, 502, 503, 504] }
+              Members:
+                Quantity: 2
+                Items:
+                  - { OriginId: pictures }
+                  - { OriginId: app }
+        DefaultCacheBehavior:                        # the site, the API and the live-game WebSockets: never cached
+          TargetOriginId: app
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE]
+          CachedMethods: [GET, HEAD]
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad          # AWS managed "CachingDisabled"
+          OriginRequestPolicyId: 33f36d7e-f396-46d9-90e0-52428a34d9dc  # AWS managed "AllViewerAndCloudFrontHeaders-2022-06": cookies, WebSocket headers, CloudFront-Forwarded-Proto
+        CacheBehaviors:
+          - PathPattern: /uploads/*                  # pictures: from S3 through the CDN cache (files are immutable and named by random IDs)
+            TargetOriginId: uploads
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods: [GET, HEAD]
+            CachedMethods: [GET, HEAD]
+            Compress: true
+            CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6        # AWS managed "CachingOptimized"
+
+  CdnBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref DataBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: CloudFrontMayReadPicturesOnly
+            Effect: Allow
+            Principal: { Service: cloudfront.amazonaws.com }
+            Action: "s3:GetObject"
+            Resource: !Sub "${DataBucket.Arn}/quickz/uploads/*"
+            Condition:
+              StringEquals:
+                "AWS:SourceArn": !Sub "arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${Cdn}"
+
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Quickz behind CloudFront - web port only (no SSH; use Session Manager)
+      VpcId: !Ref VpcId
+      SecurityGroupIngress: !If
+        - LockToCloudFront
+        - - { IpProtocol: tcp, FromPort: 80, ToPort: 80, SourcePrefixListId: !Ref CloudFrontPrefixListId, Description: Only CloudFront }
+        - - { IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: 0.0.0.0/0, Description: "HTTP from CloudFront (the app refuses requests without CloudFront's secret header)" }
+
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - { Effect: Allow, Principal: { Service: ec2.amazonaws.com }, Action: "sts:AssumeRole" }
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: quickz-bucket
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: ["s3:PutObject", "s3:GetObject", "s3:ListBucket"]
+                Resource: [!GetAtt DataBucket.Arn, !Sub "${DataBucket.Arn}/*"]
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref InstanceRole]
+
+  Server:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref ImageId
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref InstanceProfile
+      CreditSpecification: { CPUCredits: unlimited }   # never throttled mid-quiz; any surplus costs pennies
+      # IMDSv2 only. Hop limit 2 lets the Quickz Docker container (one network hop away) read the role's credentials.
+      MetadataOptions: { HttpTokens: required, HttpPutResponseHopLimit: 2, HttpEndpoint: enabled }
+      NetworkInterfaces:
+        - DeviceIndex: "0"
+          SubnetId: !Ref SubnetId
+          AssociatePublicIpAddress: true
+          GroupSet: [!Ref SecurityGroup]
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs: { VolumeSize: !Ref DiskGb, VolumeType: gp3, DeleteOnTermination: true, Encrypted: true }
+      Tags:
+        - { Key: Name, Value: quickz }
+      UserData:
+        Fn::Base64: !Sub
+          - |
+            #!/bin/bash
+            export MODE=cloudfront ORIGIN_SECRET="${OriginSecret}" PUBLIC_URL="https://${CdnDomain}" SETUP_TOKEN="${SetupToken}"
+            export BACKUP_BUCKET="${DataBucket}" S3_ENDPOINT="https://s3.${AWS::Region}.amazonaws.com" MAX_MEDIA_MB="25"
+            apt-get update -y && apt-get install -y git
+            git clone --depth 1 -b "${RepoBranch}" "${RepoUrl}" /opt/quickz
+            bash /opt/quickz/deploy/aws/bootstrap.sh
+          - OriginSecret: !Select [2, !Split ["/", !Ref "AWS::StackId"]]
+            CdnDomain: !If [HasCustomDomain, !Ref CustomDomain, !GetAtt Cdn.DomainName]   # join links and QR codes use this name
+
+Outputs:
+  SiteUrl:
+    Value: !If [HasCustomDomain, !Sub "https://${CustomDomain}", !Sub "https://${Cdn.DomainName}"]
+    Description: The one public address. Players scan the QR code on the projector; they never type it.
+  CloudFrontName:
+    Value: !GetAtt Cdn.DomainName
+    Description: "With CustomDomain: the CNAME record for your domain points at this name."
+  HostConsole:
+    Value: !If [HasCustomDomain, !Sub "https://${CustomDomain}/host", !Sub "https://${Cdn.DomainName}/host"]
+    Description: Open this after about 5 minutes (the first start installs Docker and builds the app).
+  InstanceId:
+    Value: !Ref Server
+    Description: Stop it between events to pay little (the fixed IP and the disk still cost a few dollars a month).
+  ServerAddress:
+    Value: !Ref ElasticIp
+    Description: The server's fixed IP (CloudFront's origin). Nobody needs to use it.
+  Bucket:
+    Value: !Ref DataBucket
+  OpenAShell:
+    Value: !Sub "aws ssm start-session --target ${Server}"
+    Description: "A shell on the server without SSH. The setup log is /var/log/quickz-setup.log"

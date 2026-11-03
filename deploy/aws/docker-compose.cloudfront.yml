@@ -1,0 +1,34 @@
+# Quickz when Amazon CloudFront is the ONLY public address (no domain name, no Caddy, no Let's Encrypt).
+# CloudFront reaches this server over plain HTTP on port 80 and adds a secret header; the app refuses anything without it.
+# bootstrap.sh selects this file by writing COMPOSE_FILE=docker-compose.cloudfront.yml into .env.
+name: quickz
+
+services:
+  quickz:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: quickz:local
+    restart: unless-stopped
+    environment:
+      QUICKZ_DATA: /data
+      QUICKZ_TRUST_PROXY: "1"                       # read the visitor's https and address from what CloudFront forwards
+      QUICKZ_ORIGIN_SECRET: ${QUICKZ_ORIGIN_SECRET:?set QUICKZ_ORIGIN_SECRET in .env}
+      QUICKZ_PUBLIC_URL: ${QUICKZ_PUBLIC_URL:?set QUICKZ_PUBLIC_URL (the https://dxxxx.cloudfront.net address) in .env}
+      QUICKZ_SETUP_TOKEN: ${QUICKZ_SETUP_TOKEN:-}
+      QUICKZ_MAX_MEDIA_MB: ${QUICKZ_MAX_MEDIA_MB:-25}
+      QUICKZ_MAX_PLAYERS: ${QUICKZ_MAX_PLAYERS:-1000}
+      # pictures are copied to S3 with the server's IAM role; CloudFront serves /uploads/* straight from the bucket
+      QUICKZ_S3_ENDPOINT: ${QUICKZ_S3_ENDPOINT:-}
+      QUICKZ_S3_BUCKET: ${QUICKZ_S3_BUCKET:-}
+      QUICKZ_S3_USE_ROLE: ${QUICKZ_S3_USE_ROLE:-}
+    volumes:
+      - /opt/quickz-data:/data                      # the database and uploads live on the EBS disk, outside the container
+    ports:
+      - "80:8000"
+    mem_limit: 700m
+    ulimits:
+      nofile: { soft: 65535, hard: 65535 }          # one socket per phone
+    logging:
+      driver: json-file
+      options: { max-size: "5m", max-file: "3" }

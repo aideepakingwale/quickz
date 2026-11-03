@@ -1,0 +1,61 @@
+# Quickz on one small server: the app + Caddy (automatic HTTPS). Only Caddy is reachable from the internet.
+name: quickz
+
+services:
+  quickz:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: quickz:local
+    restart: unless-stopped
+    environment:
+      QUICKZ_DATA: /data
+      QUICKZ_TRUST_PROXY: "1"                       # behind Caddy: trust X-Forwarded-* for https links and per-IP limits
+      QUICKZ_PUBLIC_URL: https://${DOMAIN:?set DOMAIN in .env}
+      QUICKZ_SETUP_TOKEN: ${QUICKZ_SETUP_TOKEN:-}
+      QUICKZ_MAX_MEDIA_MB: ${QUICKZ_MAX_MEDIA_MB:-50}
+      QUICKZ_MAX_PLAYERS: ${QUICKZ_MAX_PLAYERS:-1000}   # per game
+      # Optional, for picture-heavy games with hundreds of players: keep uploads in a free-egress bucket (R2/B2/S3) and let
+      # it serve them. See docs/DEPLOY_AWS.md, "Big games". Leave empty to serve everything from this server.
+      QUICKZ_S3_ENDPOINT: ${QUICKZ_S3_ENDPOINT:-}
+      QUICKZ_S3_BUCKET: ${QUICKZ_S3_BUCKET:-}
+      QUICKZ_S3_KEY_ID: ${QUICKZ_S3_KEY_ID:-}
+      QUICKZ_S3_SECRET: ${QUICKZ_S3_SECRET:-}
+      QUICKZ_S3_USE_ROLE: ${QUICKZ_S3_USE_ROLE:-}     # on EC2: use the server's IAM role instead of KEY_ID / SECRET
+      QUICKZ_S3_REGION: ${QUICKZ_S3_REGION:-auto}
+      QUICKZ_PUBLIC_BUCKET_URL: ${QUICKZ_PUBLIC_BUCKET_URL:-}
+    volumes:
+      - /opt/quickz-data:/data                      # the database and uploads live on the EBS disk, outside the container
+    expose:
+      - "8000"
+    mem_limit: 700m                                 # ~60 MB idle, ~150 MB with 300 players, ~290 MB with 800
+    ulimits:
+      nofile: { soft: 65535, hard: 65535 }          # one socket per phone
+    logging:
+      driver: json-file
+      options: { max-size: "5m", max-file: "3" }
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - quickz
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN}
+    ulimits:
+      nofile: { soft: 65535, hard: 65535 }
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data                            # certificates: kept across restarts so Let's Encrypt is not asked again
+      - caddy_config:/config
+    logging:
+      driver: json-file
+      options: { max-size: "5m", max-file: "3" }
+
+volumes:
+  caddy_data:
+  caddy_config:

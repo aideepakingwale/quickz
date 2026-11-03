@@ -1,0 +1,14 @@
+.venv
+.git
+.gitignore
+data
+tests
+tools
+docs
+__pycache__
+*.pyc
+.pytest_cache
+README.md
+.claude
+deploy
+brand-pack

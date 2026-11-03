@@ -1,0 +1,19 @@
+/* Event page (phone-first). Reuses the join-screen look from player.css. */
+body.event .join .game { margin-bottom: 8px; }
+.ev-desc { text-align: center; color: var(--text-muted); margin: 0 auto 10px; max-width: 34rem; white-space: pre-line; }
+.ev-when { display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center; margin: 4px 0 14px; }
+.ev-date { font-weight: 700; font-size: 1.05rem; }
+.ev-count { font: 800 1.15rem var(--font-display); color: var(--brand); }
+.ev-note { text-align: center; color: var(--text-muted); font-size: .92rem; margin: 6px 0 10px; }
+.me-card .input.pin { text-align: center; font: 700 1.2rem var(--font-display); }
+.me-card .input.pin:not(:placeholder-shown) { letter-spacing: .35em; }
+.ev-swap { display: flex; justify-content: center; margin: 2px 0 6px; }
+.ev-consent { align-self: stretch; padding: .2rem 0; }
+.ev-ticket { align-items: center; text-align: center; padding: 22px 16px; }
+.ev-ticket h2 { font-size: 1.45rem; font-weight: 800; }
+.ev-ticket .ev-when { margin-bottom: 0; }
+.ev-actions { display: flex; flex-direction: column; gap: 10px; margin: 14px 0 6px; }
+.ev-links { display: flex; justify-content: center; gap: 1.4rem; flex-wrap: wrap; margin: 6px 0 14px; }
+.linklike { background: none; border: 0; padding: .5rem .25rem; color: var(--brand); font: 600 .92rem var(--font-ui, inherit); cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.cta .linklike { align-self: center; }
+.cta .tiny { text-align: center; }
