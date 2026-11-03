@@ -5,7 +5,7 @@ You run the game yourself from the host console (so no host password is needed h
     pip install httpx websockets
     python tools/crowd.py --url https://your-app.onrender.com --code ABC123 --players 100
 
-The bots join with names like "Bot001", open a WebSocket each, and answer every question (every type) after a random 0.3-8 s
+The bots join with names like "Bot001" ("Bot Tester001" plus a made-up email if the game asks for them), open a WebSocket each, and answer every question (every type) after a random 0.3-8 s
 (buzzer questions: a random subset buzz). They stay until the game finishes (or Ctrl+C), then print how fast they
 joined and connected and how many received each question, which tells you whether the free tier is coping.
 Use --prefix to change the names, --rate to throttle how fast they join (players/second).
@@ -31,7 +31,9 @@ def pct(values, p):
 class Bot:
     def __init__(self, idx, args, base, ws_base):
         self.idx, self.args, self.base, self.ws_base = idx, args, base, ws_base
-        self.name = f"{args.prefix}{idx + 1:03d}"
+        # a game that asks for real names needs two words with letters in them; "Bot001" alone is refused
+        self.name = f"{args.prefix} Tester{idx + 1:03d}" if args.real_names else f"{args.prefix}{idx + 1:03d}"
+        self.email = f"{args.prefix.lower()}.tester{idx + 1:03d}@example.com" if args.ask_email else ""
         self.token = None
         self.seen: dict[int, float] = {}       # question index -> when its state arrived
         self.sent: set[int] = set()
@@ -41,7 +43,7 @@ class Bot:
 
     async def join(self, client):
         t = time.perf_counter()
-        r = await client.post("/api/join", json={"code": self.args.code, "nickname": self.name})
+        r = await client.post("/api/join", json={"code": self.args.code, "nickname": self.name, "email": self.email})
         if r.status_code != 200:
             raise RuntimeError(f"{self.name}: join failed HTTP {r.status_code} {r.text[:120]}")
         self.token = r.json()["token"]
@@ -128,24 +130,39 @@ async def main():
 
     base = args.url.rstrip("/")
     ws_base = ("wss" if urlparse(base).scheme == "https" else "ws") + "://" + urlparse(base).netloc
-    bots = [Bot(i, args, base, ws_base) for i in range(args.players)]
 
     async with httpx.AsyncClient(base_url=base, headers={"X-Quickz": "1"}, timeout=60, verify=not args.insecure) as client:
         r = await client.get("/healthz")           # also wakes a sleeping free instance
         print(f"server answered /healthz with HTTP {r.status_code}")
+        r = await client.get(f"/api/game/{args.code}")
+        if r.status_code != 200:
+            print(f"No game with code {args.code} (HTTP {r.status_code}). Check the code on the host console; the lobby must be open.")
+            return
+        info = r.json()
+        args.real_names, args.ask_email = bool(info.get("real_names")), bool(info.get("ask_email"))
+        print(f"game: {info.get('title')!r}  stage: {info.get('phase')}  real names: {args.real_names}  email: {args.ask_email}")
+        bots = [Bot(i, args, base, ws_base) for i in range(args.players)]
         t0 = time.perf_counter()
         sem = asyncio.Semaphore(max(1, int(args.rate)))
+        failures: list[str] = []
 
         async def start(b):
-            async with sem:
-                await b.join(client)
-                await asyncio.sleep(1 / max(args.rate, 1))
-            await b.run()
+            try:
+                async with sem:
+                    await b.join(client)
+                    await asyncio.sleep(1 / max(args.rate, 1))
+                await b.run()
+            except Exception as e:                  # say why, instead of failing silently
+                failures.append(str(e) or e.__class__.__name__)
 
         tasks = [asyncio.create_task(start(b)) for b in bots]
         while not all(b.connect_ms or t.done() for b, t in zip(bots, tasks)):
             await asyncio.sleep(0.5)
         up = sum(1 for b in bots if b.connect_ms)
+        if failures:
+            print(f"{len(failures)} players could not join or connect. First reasons:")
+            for msg in failures[:3]:
+                print("   ", msg[:200])
         print(f"{up}/{args.players} players connected in {time.perf_counter() - t0:.1f}s - now start the game from the host console.")
         print("Waiting for the game to finish (Ctrl+C to stop early)...")
         try:
