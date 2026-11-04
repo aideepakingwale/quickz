@@ -427,3 +427,17 @@ def test_model_list_needs_key_admin_and_reports_errors(app, admin, monkeypatch):
     assert audit(admin, action="models")[0]["status"] == "error"
     host = TestClient(app, headers=CSRF)
     assert host.get("/api/admin/ai/providers/groq/models").status_code in (401, 403)
+
+
+def test_cloudflare_model_list_uses_its_own_catalogue(app, admin, monkeypatch):
+    seen = []
+
+    def get(url, headers, body, timeout, method="POST"):
+        seen.append(url)
+        return 200, {"result": [{"name": "@cf/meta/llama-3.1-8b-instruct"}, {"name": "@cf/openai/whisper"}], "success": True}
+
+    monkeypatch.setattr(ai, "http_post", get)
+    r = admin.put("/api/admin/ai/providers/cloudflare", json={"api_key": "cf-test-token-123456", "account_id": "a" * 32, "enabled": True})
+    assert r.status_code == 200
+    assert admin.get("/api/admin/ai/providers/cloudflare/models").json()["models"] == ["@cf/meta/llama-3.1-8b-instruct"]
+    assert seen[0] == "https://api.cloudflare.com/client/v4/accounts/" + "a" * 32 + "/ai/models/search?task=Text%20Generation&per_page=100"

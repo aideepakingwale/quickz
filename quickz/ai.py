@@ -317,6 +317,9 @@ def list_models(name: str, cfg: dict, api_key: str, timeout: float) -> list[str]
     base = provider_url(name, cfg)
     if spec["kind"] == "gemini":
         code, data = http_post(f"{base}/models?pageSize=200", {"x-goog-api-key": api_key}, None, timeout, "GET")
+    elif name == "cloudflare":     # its OpenAI-style address has no /models, but its own catalogue does
+        root = base[: -len("/v1")] if base.endswith("/v1") else base
+        code, data = http_post(f"{root}/models/search?task=Text%20Generation&per_page=100", {"Authorization": f"Bearer {api_key}"}, None, timeout, "GET")
     else:
         code, data = http_post(f"{base}/models", {"Authorization": f"Bearer {api_key}"}, None, timeout, "GET")
     if code in (401, 403):
@@ -330,6 +333,10 @@ def list_models(name: str, cfg: dict, api_key: str, timeout: float) -> list[str]
         for m in data.get("models") or []:
             if isinstance(m, dict) and "generateContent" in (m.get("supportedGenerationMethods") or []):
                 names.append(str(m.get("name", "")).removeprefix("models/"))
+    elif name == "cloudflare":
+        for m in data.get("result") or []:
+            if isinstance(m, dict):
+                names.append(str(m.get("name", "")))
     else:
         for m in data.get("data") or []:
             if isinstance(m, dict) and m.get("active", True) is not False:
@@ -366,11 +373,15 @@ def call_provider(name: str, cfg: dict, api_key: str, system: str, user: str, ti
         raise AIError("The AI service is rate-limited right now (free quota used up).", "rate_limited")
     if code in (401, 403):
         raise AIError(f"The AI service refused the key (HTTP {code}). Ask the Super Admin to check the key and that it is for this service.", "error")
+    if code in (404, 410):
+        raise AIError(f"The model \"{model}\" is no longer available from this service (HTTP {code}). A Super Admin can pick a current one on the AI page: open the service, choose Load model list, then Save.", "error")
     if code >= 400:
         detail = ""
         err = data.get("error") if isinstance(data, dict) else None
         if isinstance(err, dict):
             detail = clean_line(err.get("message"), 120)
+        elif isinstance(err, str):
+            detail = clean_line(err, 120)
         raise AIError(f"The AI service returned an error (HTTP {code}). {detail}".strip(), "error")
     try:
         if spec["kind"] == "gemini":

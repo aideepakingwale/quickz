@@ -11,7 +11,8 @@ const AI_STATUS = {
 const aiChip = s => { const [cls, label] = AI_STATUS[s] || ['', s]; return el('span', { class: 'chip ' + cls }, label); };
 
 /* ---------------------------------------------------------------- host: the drafting dialog */
-async function aiDialog({ onAdd }) {
+/** `single`: draft exactly one question (used when adding a question during a live game). `defaults`: preset form values. */
+async function aiDialog({ onAdd, single = false, defaults = {} }) {
   let opts;
   try { opts = await api('/api/ai/options'); } catch (e) { return ui.toast(e.message, 'error'); }
   const admin = typeof isAdmin === 'function' && isAdmin();
@@ -31,7 +32,7 @@ async function aiDialog({ onAdd }) {
   };
   const topic = el('input', { class: 'input', id: 'ai-topic', maxLength: 200, placeholder: 'e.g. The solar system, Indian festivals, Fire safety at work', 'aria-label': 'Topic', autofocus: true });
   const quizType = pick('ai-quiz', 'Quiz type', opts.quiz_types, 'general');
-  const qType = pick('ai-qtype', 'Question type', opts.question_types, 'mixed');
+  const qType = pick('ai-qtype', 'Question type', opts.question_types, defaults.question_type || 'mixed');
   const diff = pick('ai-diff', 'Difficulty', opts.difficulties, 'medium');
   const level = pick('ai-level', 'Audience knowledge level', opts.levels, 'intermediate');
   const age = pick('ai-age', 'Audience age group', opts.age_groups, 'all');
@@ -49,7 +50,7 @@ async function aiDialog({ onAdd }) {
     body.replaceChildren(
       el('p', { class: 'muted' }, `AI writes drafts only. You review every question and choose which ones to add. You have ${opts.remaining_today} request${opts.remaining_today === 1 ? '' : 's'} left today.`),
       el('div', { class: 'field' }, el('label', { for: 'ai-topic' }, 'Topic'), topic, el('span', { class: 'hint' }, 'Describe the subject in words. Do not paste web addresses or instructions.')),
-      el('div', { class: 'ai-grid' }, quizType.field, qType.field, diff.field, level.field, age.field, count.field, lang.field), err);
+      el('div', { class: 'ai-grid' }, quizType.field, qType.field, diff.field, level.field, age.field, single ? null : count.field, lang.field), err);
     cancel.textContent = 'Cancel';
     go1.replaceChildren(icon('sparkle'), 'Draft questions'); go1.disabled = false; go1.onclick = generate;
     setTimeout(() => topic.focus(), 30);
@@ -62,7 +63,7 @@ async function aiDialog({ onAdd }) {
     try {
       const r = await api('/api/ai/generate', { method: 'POST', body: {
         topic: topic.value, quiz_type: quizType.sel.value, question_type: qType.sel.value, difficulty: diff.sel.value,
-        level: level.sel.value, age_group: age.sel.value, language: lang.sel.value, count: Number(count.sel.value) } });
+        level: level.sel.value, age_group: age.sel.value, language: lang.sel.value, count: single ? 1 : Number(count.sel.value) } });
       opts.remaining_today = Math.max(0, opts.remaining_today - 1);
       showDrafts(r);
     } catch (e) { go1.disabled = false; go1.replaceChildren(icon('sparkle'), 'Draft questions'); err.textContent = e.message; }
@@ -79,7 +80,7 @@ async function aiDialog({ onAdd }) {
 
   function showDrafts(r) {
     const boxes = r.questions.map(() => el('input', { type: 'checkbox', checked: true }));
-    const refresh = () => { const n = boxes.filter(b => b.checked).length; go1.disabled = !n; go1.replaceChildren(icon('plus'), n ? `Add ${n} question${n > 1 ? 's' : ''}` : 'Add questions'); };
+    const refresh = () => { const n = boxes.filter(b => b.checked).length; go1.disabled = !n; go1.replaceChildren(icon('plus'), single ? 'Use this question' : n ? `Add ${n} question${n > 1 ? 's' : ''}` : 'Add questions'); };
     boxes.forEach(b => b.addEventListener('change', refresh));
     body.replaceChildren(
       el('div', { class: 'ai-note' }, icon('warn'), el('div', {}, el('b', {}, 'Drafted by AI. '), 'Check every fact and answer before you use a question. Untick any you do not want. You can edit them after adding.')),
@@ -94,7 +95,7 @@ async function aiDialog({ onAdd }) {
       if (!chosen.length) return;
       onAdd(chosen);
       api('/api/ai/accept', { method: 'POST', body: { audit_id: r.audit_id, count: chosen.length } }).catch(() => {});
-      m.close(); ui.toast(`Added ${chosen.length} AI-drafted question${chosen.length > 1 ? 's' : ''}. Review them before your game.`, 'success');
+      m.close(); ui.toast(single ? 'AI draft is in the form. Check it, then add it to the game.' : `Added ${chosen.length} AI-drafted question${chosen.length > 1 ? 's' : ''}. Review them before your game.`, 'success');
     };
     refresh();
   }

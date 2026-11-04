@@ -942,6 +942,12 @@ async function renderLive(code) {
     };
 
     const redraw = cb => { formBox.replaceChildren(questionForm(q, { change: check, rebuild: redraw })); check(); if (typeof cb === 'function') setTimeout(cb, 0); };
+    const aiBtn = el('button', { class: 'btn ai-btn', type: 'button', onclick: () => aiDialog({ single: true, defaults: { question_type: 'mcq' }, onAdd: ([d]) => {
+      const keep = tie ? { winners: q.winners, time_limit: q.time_limit, points: q.points, speed_weight: q.speed_weight } : {};   // a tie-breaker stays a quick winner-takes-all
+      Object.keys(q).forEach(k => delete q[k]);
+      Object.assign(q, hydrateQuestion(d), keep);
+      redraw();
+    } }) }, icon('sparkle'), 'Draft with AI');
     insert.addEventListener('click', () => {
       const clean = cleanQuestion(q);
       send({ t: 'add_question', question: clean, only: st.everyone ? undefined : [...st.ids], where: st.where, save_to_quiz: st.save });
@@ -953,7 +959,7 @@ async function renderLive(code) {
       el('div', { class: 'db' },
         tie ? el('div', { class: 'tie-alert', style: { marginBottom: '1rem' } }, icon('trophy'), el('div', {}, el('b', {}, `${tie.players.map(p => p.avatar + ' ' + p.nickname).join(' vs ')}`), el('div', { class: 'muted', style: { fontSize: '.88rem' } }, `tied for ${ordinal(tie.rank)} place on ${fmtScore(tie.score)} points`)))
           : el('p', { class: 'muted', style: { marginBottom: '1rem', fontSize: '.9rem' } }, 'Write a question and it joins the game immediately. Perfect for a tie-breaker or a surprise bonus round.'),
-        formBox, optBox),
+        el('div', { style: { marginBottom: '1rem' } }, aiBtn), formBox, optBox),
       el('div', { class: 'df' }, el('button', { class: 'btn', type: 'button', onclick: closeDrawer }, 'Cancel'), insert));
     const scrim = el('div', { class: 'drawer-scrim', onclick: closeDrawer });
     const esc = e => { if (e.key === 'Escape') closeDrawer(); };
