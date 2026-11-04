@@ -26,6 +26,7 @@ YT_ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
 VIMEO_ID = re.compile(r"^\d{5,12}$")
 MEDIA_KINDS = ("audio", "video", "embed")
 MEDIA_WHERE = ("screen", "players", "both")
+MAX_QUESTIONS = 200                      # the Super Admin can change this on the Settings page
 AUDIO_EXT = {".mp3", ".m4a", ".wav", ".ogg", ".flac", ".aac"}
 MUSIC_EXT = {".mp3", ".m4a", ".ogg", ".wav"}                 # lobby music: only these
 VIDEO_EXT = {".mp4", ".webm"}
@@ -510,8 +511,8 @@ def validate_quiz(raw: dict) -> dict:
     if not title:
         raise ValidationError("Quiz title is required")
     questions = raw.get("questions") or []
-    if len(questions) > 200:
-        raise ValidationError("A quiz can have at most 200 questions")
+    if len(questions) > MAX_QUESTIONS:
+        raise ValidationError(f"A quiz can have at most {MAX_QUESTIONS} questions")
     cleaned = []
     for i, q in enumerate(questions, 1):
         try:

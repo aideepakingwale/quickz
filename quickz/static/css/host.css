@@ -528,3 +528,19 @@ input::-ms-reveal, input::-ms-clear { display: none; }
 .music-field { display: flex; flex-direction: column; gap: .4rem; }
 .upl-prog { height: 6px; border-radius: 3px; background: var(--surface-3); overflow: hidden; }
 .upl-prog i { display: block; height: 100%; background: var(--brand); width: 0; transition: width .2s; }
+.look-body { display: flex; flex-direction: column; gap: .5rem; }
+.look-h { font-weight: 700; font-size: .95rem; margin-top: .9rem; }
+.look-h:first-child { margin-top: 0; }
+.look-btn { gap: .5rem; }
+.look-btn.wide { width: 100%; justify-content: flex-start; margin: .5rem 0; }
+.look-btn .chip { margin-left: auto; }
+@media (max-width: 1100px) { .ed-bar .look-btn { display: none; } }
+
+/* Super Admin settings page */
+.conf-group { margin-bottom: 1.4rem; } .conf-group h3 { margin: 0 0 .4rem; }
+.conf-row { display: flex; gap: 1.2rem; justify-content: space-between; align-items: center; padding: .7rem 0; border-top: 1px solid var(--border); flex-wrap: wrap; }
+.conf-text { flex: 1 1 22rem; min-width: 0; } .conf-text label { font-weight: 650; }
+.input.changed { border-color: var(--warn); box-shadow: 0 0 0 2px color-mix(in srgb, var(--warn) 25%, transparent); }
+.conf-changes { margin: .5rem 0 0; padding-left: 1.2rem; display: flex; flex-direction: column; gap: .3rem; }
+tr.picked { background: color-mix(in srgb, var(--danger) 7%, var(--surface)); }
+.btn.danger:disabled { background: var(--surface-3); border-color: var(--border); color: var(--text-faint); }

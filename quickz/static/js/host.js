@@ -75,7 +75,8 @@ function paintTopbar(active) {
       el('a', { href: '#/games', 'aria-current': active === 'games' ? 'page' : null }, 'Games'),
       el('a', { href: '#/events', 'aria-current': active === 'events' ? 'page' : null }, 'Events'),
       isAdmin() ? el('a', { href: '#/team', 'aria-current': active === 'team' ? 'page' : null }, 'Team') : null,
-      isAdmin() ? el('a', { href: '#/ai', 'aria-current': active === 'ai' ? 'page' : null }, 'AI') : null),
+      isAdmin() ? el('a', { href: '#/ai', 'aria-current': active === 'ai' ? 'page' : null }, 'AI') : null,
+      isAdmin() ? el('a', { href: '#/settings', 'aria-current': active === 'settings' ? 'page' : null }, 'Settings') : null),
     el('span', { class: 'spacer' }), el('a', { class: 'btn ghost sm', href: '/', target: '_blank', rel: 'noopener', 'aria-label': 'Player page' }, icon('external'), el('span', { class: 'lbl' }, 'Player page')), themeBtn, userBtn);
 }
 
@@ -105,7 +106,7 @@ async function boot() {
   let st;
   try { st = await api('/api/auth/state'); }
   catch (e) { return mount(el('div', { class: 'login' }, el('h1', {}, 'Cannot reach DiQuizBuzz'), el('p', { class: 'muted' }, e.message))); }
-  window.QUICKZ_MAX_MEDIA_MB = st.max_media_mb || 50;
+  window.QUICKZ_MAX_MEDIA_MB = st.max_media_mb || 50; window.QUICKZ_MAX_IMAGE_MB = st.max_image_mb || 2; window.QUICKZ_MAX_MUSIC_MB = st.max_music_mb || 5;
   if (st.setup_needed) return renderSetup();
   if (!st.user) return renderLogin();
   me = st.user;
@@ -131,6 +132,7 @@ function route() {
   if (h[0] === 'events') { paintTopbar('events'); return renderEvents(); }
   if (h[0] === 'event') { paintTopbar('events'); return renderEvent(h[1]); }
   if (h[0] === 'account') { paintTopbar(''); return renderAccount(); }
+  if (h[0] === 'settings') { if (!isAdmin()) return go('#/'); paintTopbar('settings'); return renderAdminSettings(); }
   if (h[0] === 'ai') { if (!isAdmin()) return go('#/'); paintTopbar('ai'); return renderAISettings(); }
   if (h[0] === 'team') { if (!isAdmin()) return go('#/'); paintTopbar('team'); return renderTeam(); }
   paintTopbar('quizzes');
@@ -479,7 +481,7 @@ function skinPicker(get, set) {
 }
 function startDialog(quiz) {
   let preset = 'party';
-  const opts = { ...PRESETS[0].s, skin: 'classic' };
+  const opts = { ...PRESETS[0].s, skin: 'classic', phone_music: true };
   const presetBox = el('div', { class: 'presets', role: 'radiogroup', 'aria-label': 'Game style' });
   const toggles = el('div');
   const draw = () => {
@@ -490,6 +492,7 @@ function startDialog(quiz) {
       box('jokers', 'Double up power-up', 'Every player may double the points of ONE question, chosen before they answer. A risk-and-reward twist.'), box('real_names', 'Real names', 'Players enter their first and last name, shown on the big screen. Turn off for fun nicknames.'),
       box('ask_email', 'Ask for email', 'Each player enters an email, used only to tell people apart (one registration per email) and in your results export. DiQuizBuzz never sends email.'),
       box('reactions', 'Emoji reactions', 'Phones can throw 👏 🔥 😂 at the big screen between questions.'),
+      ...(quiz.has_music ? [box('phone_music', 'Waiting-screen music on phones', 'Players also hear this quiz’s music on their phones while they wait. Turn it off when everyone is in the room with the big screen, so the music plays from one place.')] : []),
       el('div', { class: 'row2', style: { marginTop: '.6rem' } },
         settingSelect('Drum-roll before the answer', 'The room sees "Final answers locked" while the suspense builds.', REVEAL_PAUSE_CHOICES, () => opts.reveal_pause, v => { opts.reveal_pause = v; preset = ''; presetBox.querySelectorAll('.preset').forEach(b => b.setAttribute('aria-pressed', 'false')); }),
         settingSelect('Sound pack (big screen)', 'Music and sound effects play from the projector, not from phones.', SOUND_PACK_CHOICES, () => opts.sound_pack, v => { opts.sound_pack = v; preset = ''; presetBox.querySelectorAll('.preset').forEach(b => b.setAttribute('aria-pressed', 'false')); })));

@@ -25,7 +25,7 @@ REACT_GAP_S = 1.0                                # one reaction per player per s
 REACT_BATCH_MAX = 24                             # most reactions shown per 0.4 s; a bigger crowd is sampled
 CROWD_MAX = 150                                  # avatars sampled for the "fly into the bars" reveal
 DEFAULT_SETTINGS = {"speed_bonus": True, "auto_reveal": True, "ask_email": False, "real_names": False, "jokers": False, "skin": "classic",
-                    "reveal_pause": 0, "sound_pack": "gameshow", "reactions": False}
+                    "reveal_pause": 0, "sound_pack": "gameshow", "reactions": False, "phone_music": True}
 SCORED = grading.SCORED_TYPES                 # types with a right answer
 LIVE_PHASES = ("question", "reveal", "slide")
 BUZZ_WINDOW_S = 0.12
@@ -689,6 +689,8 @@ class Game:
 
     def view_player(self, p: Player, ranks: dict) -> dict:
         v = self._common(ranks)
+        # the waiting-screen music plays on phones only while players are waiting, and only if the host left that on
+        v["music"] = v["music"] if (self.phase == "lobby" and self.settings.get("phone_music", True)) else ""
         rank = ranks["rank"].get(p.id)
         v["me"] = {"id": p.id, "nickname": p.nickname, "avatar": p.avatar, "score": p.score, "rank": rank,
                    "streak": p.streak, "joker": self._joker_left(p)}

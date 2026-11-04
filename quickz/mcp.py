@@ -21,6 +21,7 @@ from urllib.parse import urlparse
 from fastapi import Request, Response
 
 from . import auth
+from . import questions as questions_mod
 from .engine import GameError, game_results
 from .questions import ValidationError, parse_text_quiz, strip_tags, validate_quiz
 
@@ -209,8 +210,9 @@ def t_add(ctx, args):
     add = _parse(_text(args))
     if not add["questions"]:
         raise ToolError("No questions found. Each question starts with 'Q:'.")
-    if len(quiz["questions"]) + len(add["questions"]) > MAX_QUESTIONS:
-        raise ToolError(f"A quiz can hold {MAX_QUESTIONS} questions; this one has {len(quiz['questions'])}.")
+    limit = questions_mod.MAX_QUESTIONS
+    if len(quiz["questions"]) + len(add["questions"]) > limit:
+        raise ToolError(f"A quiz can hold {limit} questions; this one has {len(quiz['questions'])}.")
     quiz["questions"] += add["questions"]
     quiz["description"] = _label(quiz["description"])
     ctx.db.update_quiz(quiz["id"], quiz)

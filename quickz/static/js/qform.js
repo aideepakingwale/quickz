@@ -129,11 +129,12 @@ async function shrinkImage(file, maxDim) {
     return blob && blob.type === 'image/webp' && blob.size < file.size ? new File([blob], 'picture.webp', { type: 'image/webp' }) : file;
   } catch (e) { return file; } finally { URL.revokeObjectURL(url); }
 }
-const MAX_PICTURE_BYTES = 2 * 1024 * 1024;          // pictures (the server enforces the same cap)
+const pictureMB = () => window.QUICKZ_MAX_IMAGE_MB || 2;          // pictures (the server enforces the same cap; the Super Admin can change it)
 async function uploadImage(file, maxDim = 1100) {
   if (!file || !file.type.startsWith('image/')) throw new Error('Choose an image file (PNG, JPEG, GIF or WebP).');
   const small = await shrinkImage(file, maxDim);              // phones on slow Wi-Fi thank you: big photos become a few hundred KB
-  if (small.size > MAX_PICTURE_BYTES) throw new Error(`This picture is ${(small.size / 1048576).toFixed(1)} MB, and pictures can be at most 2 MB. Choose a smaller one, or save it as JPEG or WebP.`);
+  if (small.size > pictureMB() * 1048576 && file.type === 'image/gif') throw new Error(`This GIF is ${(small.size / 1048576).toFixed(1)} MB. Pictures can be at most ${pictureMB()} MB, and an animated GIF cannot be shrunk here without losing its animation. Make the GIF smaller first (for example at ezgif.com: fewer frames or a smaller size), or ask a Super Admin to raise the picture limit on the Settings page.`);
+  if (small.size > pictureMB() * 1048576) throw new Error(`This picture is ${(small.size / 1048576).toFixed(1)} MB, and pictures can be at most ${pictureMB()} MB. Choose a smaller one, or save it as JPEG or WebP.`);
   return (await api('/api/uploads', { method: 'POST', raw: small })).url;
 }
 /** Upload with a progress callback (fetch can't report upload progress). Resolves to {url, kind}. */
@@ -279,7 +280,7 @@ function questionForm(q, h) {
   /* -- picture (+ effect) */
   const picBox = el('div');
   const drawPic = () => {
-    const field = pictureField({ value: q.image, label: kind === 'pin' ? 'Add the picture players will point at' : kind === 'jigsaw' ? 'Add the picture to cut into a puzzle' : 'Drop a picture here, or click to browse', hint: 'PNG, JPEG, GIF or WebP, up to 2 MB. Large photos are shrunk automatically.',
+    const field = pictureField({ value: q.image, label: kind === 'pin' ? 'Add the picture players will point at' : kind === 'jigsaw' ? 'Add the picture to cut into a puzzle' : 'Drop a picture here, or click to browse', hint: `PNG, JPEG, GIF or WebP, up to ${pictureMB()} MB. Large photos are shrunk automatically.`,
       onValue: (url, img) => {
         if (img === undefined) { q.image = url; if (!url) { q.image_effect = 'none'; if (q.pin) q.pin.placed = false; } h.change(); h.rebuild(); return; }
         if (q.pin && img.naturalWidth) { const ar = img.naturalWidth / img.naturalHeight; if (Math.abs(ar - q.pin.ar) > 0.001) { q.pin.ar = ar; h.change(); } }

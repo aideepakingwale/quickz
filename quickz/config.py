@@ -27,6 +27,8 @@ class Settings:
     session_days: int = 7
     max_media_mb: int = 50     # audio/video upload cap; images are always capped at 2 MB
     max_players: int = 500     # per game; QUICKZ_MAX_PLAYERS
+    max_image_mb: int = 2      # pictures; the Super Admin can change this (and the others below) on the Settings page
+    max_music_mb: int = 5      # waiting-screen music
     public_url_set: bool = field(default=False, init=False)
     origin_secret: str = ""    # behind CloudFront: refuse any request that lacks CloudFront's secret header (QUICKZ_ORIGIN_SECRET)
     # Behind a reverse proxy / PaaS router: trust X-Forwarded-* so https links, cookies and per-IP limits are right.

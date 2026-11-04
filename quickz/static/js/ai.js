@@ -637,13 +637,13 @@ async function renderAISettings() {
       return [el('span', {}, r.message || '')];
     };
     const rows = logRows.map(r => el('tr', { class: 'clickable', tabIndex: 0, onclick: () => detail(r.id), onkeydown: e => { if (e.key === 'Enter') detail(r.id); } },
-      el('td', { class: 'muted nowrap' }, timeAgo(r.ts)), el('td', {}, r.username || '—'), el('td', {}, { generate: 'Drafting', image: 'Picture', image_idea: 'Picture idea', test: 'Key test', models: 'Model list', config: 'Settings' }[r.action] || r.action),
+      el('td', { class: 'muted nowrap' }, timeAgo(r.ts)), el('td', {}, r.username || '—'), el('td', {}, { generate: 'Drafting', image: 'Picture', image_idea: 'Picture idea', test: 'Key test', models: 'Model list', config: 'Settings', settings: 'Admin settings', cleanup: 'Cleanup' }[r.action] || r.action),
       el('td', {}, aiChip(r.status)), el('td', {}, summary(r)), el('td', {}, r.provider ? `${r.provider}` : '—'),
       el('td', { class: 'num' }, r.action === 'generate' ? `${r.returned}/${r.requested} · ${r.accepted} added` : r.action === 'image' ? (r.returned ? (r.accepted ? 'drawn · used' : 'drawn') : '') : ''), el('td', { class: 'num' }, r.tokens_in + r.tokens_out ? (r.tokens_in + r.tokens_out).toLocaleString() : ''),
       el('td', { class: 'num' }, r.latency_ms ? (r.latency_ms / 1000).toFixed(1) + ' s' : '')));
     logBox.replaceChildren(...[
       el('div', { class: 'row', style: { gap: '.5rem', flexWrap: 'wrap', marginBottom: '.6rem' } },
-        sel('status', 'Any result', Object.entries(AI_STATUS).map(([v, [, l]]) => [v, l])), sel('action', 'Any action', [['generate', 'Drafting'], ['image', 'Picture'], ['image_idea', 'Picture idea'], ['test', 'Key test'], ['models', 'Model list'], ['config', 'Settings']]), userIn,
+        sel('status', 'Any result', Object.entries(AI_STATUS).map(([v, [, l]]) => [v, l])), sel('action', 'Any action', [['generate', 'Drafting'], ['image', 'Picture'], ['image_idea', 'Picture idea'], ['test', 'Key test'], ['models', 'Model list'], ['config', 'Settings'], ['settings', 'Admin settings'], ['cleanup', 'Cleanup']]), userIn,
         sel('days', 'Range', []), el('span', { class: 'grow' }),
         el('a', { class: 'btn sm', href: `/api/admin/ai/audit.csv?days=${filters.days}`, download: 'ai-audit.csv' }, icon('download'), 'Export CSV')),
       logRows.length ? el('div', { class: 'tbl-wrap' }, el('table', { class: 'tbl' }, el('thead', {}, el('tr', {}, ['When', 'Who', 'What', 'Result', 'Details', 'Service', 'Questions', 'Tokens', 'Time'].map(h => el('th', {}, h)))), el('tbody', {}, rows)))

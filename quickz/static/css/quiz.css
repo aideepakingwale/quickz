@@ -354,3 +354,13 @@ body.player .drift i { --o: .06; }
 .jig-board { width: min(calc(100% - 38px), calc(54dvh * var(--ar, 1.5))); margin: 20px auto; }
 .jig-hintslot:empty { display: none; }
 .jig-hint { align-self: flex-start; }
+
+/* ---- shared by the projector and the phones: the quiz's own background, and a long description that scrolls by itself ---- */
+.desc-box.scrolling { -webkit-mask-image: linear-gradient(transparent, #000 8%, #000 92%, transparent); mask-image: linear-gradient(transparent, #000 8%, #000 92%, transparent); }
+.desc-box.scrolling .desc { animation: desc-scroll var(--dur, 14s) ease-in-out infinite alternate; will-change: transform; }
+@keyframes desc-scroll { 0%, 14% { transform: translateY(0); } 86%, 100% { transform: translateY(calc(var(--shift, 0px) * -1)); } }
+@media (prefers-reduced-motion: reduce) { .desc-box.scrolling .desc { animation: none; } }
+.screen-bg { position: fixed; inset: 0; z-index: 0; background-size: cover; background-position: center; background-repeat: no-repeat; animation: fade-up .6s var(--ease) both; }
+.screen-bg::after { content: ''; position: absolute; inset: 0; background: color-mix(in srgb, var(--bg) 58%, transparent); }
+body.has-bg .drift { display: none; }
+body.player .screen-bg::after { background: color-mix(in srgb, var(--bg) 72%, transparent); }          /* phones are held close, so the wash is stronger */

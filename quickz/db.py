@@ -137,6 +137,10 @@ CREATE TABLE IF NOT EXISTS ai_audit(
   response TEXT NOT NULL DEFAULT '',
   request TEXT NOT NULL DEFAULT '{}'
 );
+CREATE TABLE IF NOT EXISTS app_settings(
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS ai_prompts(
   sha TEXT PRIMARY KEY,
   version TEXT NOT NULL DEFAULT '',
@@ -272,7 +276,7 @@ class Database:
         """owner_id=None lists everything (super admin); otherwise only that owner's quizzes."""
         where, args = ("WHERE q.owner_id=?", (owner_id,)) if owner_id is not None else ("", ())
         rows = self._all(
-            f"""SELECT q.id,q.title,q.description,q.cover,q.questions,q.updated_at,q.owner_id,
+            f"""SELECT q.id,q.title,q.description,q.cover,(q.lobby_music<>'') AS has_music,q.questions,q.updated_at,q.owner_id,
                       COALESCE(u.display_name,'') AS owner_name,
                       (SELECT COUNT(*) FROM games g WHERE g.quiz_id=q.id) AS plays,
                       (SELECT MAX(created_at) FROM games g WHERE g.quiz_id=q.id) AS last_played
@@ -304,6 +308,52 @@ class Database:
 
     def delete_quiz(self, quiz_id: int) -> bool:
         return self._run("DELETE FROM quizzes WHERE id=?", (quiz_id,)).rowcount > 0
+
+    # ---- platform settings and clean-up (Super Admin) -----------------
+    def app_settings(self) -> dict:
+        out = {}
+        for r in self._all("SELECT key, value FROM app_settings"):
+            try:
+                out[r["key"]] = json.loads(r["value"])
+            except ValueError:
+                pass
+        return out
+
+    def app_set(self, changes: dict):
+        for k, v in changes.items():
+            self._run("INSERT INTO app_settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (k, json.dumps(v)))
+
+    def app_unset(self, keys):
+        for k in keys:
+            self._run("DELETE FROM app_settings WHERE key=?", (k,))
+
+    def quiz_overview(self) -> list:
+        """Every quiz from every host, with what a clean-up needs to decide: age, plays, size."""
+        rows = self._all(
+            """SELECT q.id,q.title,q.owner_id,COALESCE(u.display_name,'') AS owner_name,q.created_at,q.updated_at,q.questions,
+                      (SELECT COUNT(*) FROM games g WHERE g.quiz_id=q.id) AS plays,
+                      (SELECT MAX(created_at) FROM games g WHERE g.quiz_id=q.id) AS last_played,
+                      (SELECT COUNT(*) FROM events e WHERE e.quiz_id=q.id) AS events
+               FROM quizzes q LEFT JOIN users u ON u.id=q.owner_id ORDER BY q.updated_at DESC""")
+        for r in rows:
+            raw = r.pop("questions")
+            r["question_count"] = len(json.loads(raw))
+            r["bytes"] = len(raw)
+        return rows
+
+    def delete_quizzes(self, ids) -> int:
+        """Remove quizzes. Games already played keep their own copy and results; an event that used one is left without a quiz."""
+        ids = [int(i) for i in ids]
+        if not ids:
+            return 0
+        marks = ",".join("?" * len(ids))
+        self._run(f"UPDATE events SET quiz_id=NULL WHERE quiz_id IN ({marks})", tuple(ids))
+        return self._run(f"DELETE FROM quizzes WHERE id IN ({marks})", tuple(ids)).rowcount
+
+    def storage_counts(self) -> dict:
+        one = lambda sql: self._one(sql)["n"]
+        return {"users": one("SELECT COUNT(*) n FROM users"), "quizzes": one("SELECT COUNT(*) n FROM quizzes"), "games": one("SELECT COUNT(*) n FROM games"),
+                "players": one("SELECT COUNT(*) n FROM players"), "answers": one("SELECT COUNT(*) n FROM answers"), "events": one("SELECT COUNT(*) n FROM events")}
 
     # ---- games -------------------------------------------------------
     def create_game(self, code, quiz_id, title, description, settings, questions, owner_id=None) -> int:

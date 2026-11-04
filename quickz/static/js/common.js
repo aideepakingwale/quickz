@@ -312,7 +312,7 @@ async function api(path, { method = 'GET', body, raw } = {}) {
 
 /* ---------------------------------------------------------------- UI primitives */
 const ui = {
-  toast(msg, type = 'info', ms = 3500) {
+  toast(msg, type = 'info', ms = type === 'error' ? Math.min(15000, Math.max(5000, String(msg).length * 75)) : 3500) {      // an error stays long enough to be read
     let box = $('#toasts');
     if (!box) { box = el('div', { id: 'toasts', role: 'status', 'aria-live': 'polite' }); document.body.append(box); }
     const t = el('div', { class: 'toast ' + type }, type === 'success' ? icon('check') : type === 'error' ? icon('warn') : null, msg);
@@ -586,4 +586,22 @@ function countUp(node, to, { from = 0, ms = 900, fmt = fmtScore } = {}) {
     node.textContent = fmt(Math.round(from + (to - from) * e));
     if (k < 1) requestAnimationFrame(step);
   })(t0);
+}
+
+/** The quiz's background picture fills the whole screen at any resolution (scaled to cover, centred), under a soft wash so the text stays readable. */
+let bgNow = null;
+function applyBackground(url) {
+  url = url || '';
+  if (url === bgNow) return;
+  bgNow = url;
+  let layer = document.querySelector('.screen-bg');
+  if (!url) { layer?.remove(); document.body.classList.remove('has-bg'); return; }
+  const done = () => {
+    if (!layer) { layer = el('div', { class: 'screen-bg', 'aria-hidden': 'true' }); document.body.prepend(layer); }
+    layer.style.backgroundImage = `url("${url.replace(/"/g, '%22')}")`;
+    document.body.classList.add('has-bg');
+  };
+  const probe = new Image();                                // show it only once it has loaded, so there is no flash of an empty frame
+  probe.onload = done; probe.onerror = () => { bgNow = null; };
+  probe.src = url;
 }

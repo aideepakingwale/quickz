@@ -160,3 +160,14 @@ audio.media-el { height: 44px; }
 @keyframes react-pop { 40% { transform: scale(1.5) rotate(-8deg); } }
 body.has-react .p-stage { padding-bottom: calc(78px + env(safe-area-inset-bottom)); }
 @media (prefers-reduced-motion: reduce) { .susp-banner, .react-bar button.sent { animation: none; } }
+
+/* the lobby description and music button on a phone */
+.p-desc { width: 100%; max-width: 30rem; margin: 0 auto; text-align: left; font-size: .98rem; color: var(--text-muted); padding: .6rem .8rem; border-radius: var(--r-md); background: color-mix(in srgb, var(--surface) 78%, transparent); border: 1px solid var(--border); }
+.p-desc .desc > *:first-child { margin-top: 0; } .p-desc .desc > *:last-child { margin-bottom: 0; }
+.music-btn { align-self: center; }
+.scene.lobby.has-desc { gap: .7rem; padding-top: .2rem; }
+.scene.lobby.has-desc .me-avatar { width: 4.6rem; height: 4.6rem; font-size: 2.4rem; }
+.scene.lobby.has-desc h1 { font-size: 1.45rem; }
+.scene.lobby.has-desc .dots { display: none; }
+.scene.lobby.has-desc .tip { display: none; }
+

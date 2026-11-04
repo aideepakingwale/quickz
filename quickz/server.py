@@ -26,6 +26,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import ai as ai_mod
 from . import aimage as aimage_mod
+from . import adminconf as adminconf_mod
 from . import mcp as mcp_mod
 from . import auth
 from .cloud import CloudSync
@@ -46,8 +47,6 @@ CSRF_HEADER = "x-quickz"
 MAX_WS_BYTES = 4096
 MAX_MSGS_PER_SEC = 25
 MAX_SCREENS = 20
-MAX_IMAGE = 2 * 1024 * 1024                       # pictures: the browser shrinks big photos first, so 2 MB is plenty
-MAX_MUSIC = 5 * 1024 * 1024                       # lobby music
 MUSIC_EXT = (".mp3", ".m4a", ".ogg", ".wav")        # the few music formats we accept
 IMAGE_MAGIC = [
     (b"\x89PNG\r\n\x1a\n", ".png"),
@@ -121,6 +120,19 @@ def create_app(settings: Settings, guard: auth.LoginGuard | None = None, cloud: 
     manager.restore()
     db.purge_sessions()
     guard = guard or auth.LoginGuard()
+    conf_defaults = adminconf_mod.defaults(settings, guard)       # what this server was started with
+
+    def conf_effective() -> dict:
+        eff = dict(conf_defaults)
+        for k, v in db.app_settings().items():
+            if k in adminconf_mod.SPECS:
+                try:
+                    eff[k] = adminconf_mod.clean(k, v)
+                except ValueError:
+                    pass                                          # a stored value that is no longer in range falls back to the default
+        return eff
+
+    adminconf_mod.apply(settings, guard, conf_effective())
 
     @contextlib.asynccontextmanager
     async def lifespan(_app):
@@ -243,7 +255,7 @@ def create_app(settings: Settings, guard: auth.LoginGuard | None = None, cloud: 
     async def auth_state(request: Request):
         u = user_from_cookie(request.cookies)
         return {"setup_needed": db.count_users() == 0, "user": public_user(u) if u else None, "public_url": settings.public_url,
-                "max_media_mb": settings.max_media_mb}
+                "max_media_mb": settings.max_media_mb, "max_image_mb": settings.max_image_mb, "max_music_mb": settings.max_music_mb}
 
     @app.post("/api/auth/setup")
     async def auth_setup(request: Request, response: Response):
@@ -452,9 +464,10 @@ def create_app(settings: Settings, guard: auth.LoginGuard | None = None, cloud: 
         """Images (2 MB), lobby music (?purpose=music: MP3, M4A, OGG or WAV, 5 MB) and other audio/video (QUICKZ_MAX_MEDIA_MB).
         Streamed to disk, type decided by sniffing the bytes."""
         media_cap = settings.max_media_mb * 1024 * 1024
+        image_cap, music_cap = settings.max_image_mb * 1024 * 1024, settings.max_music_mb * 1024 * 1024
         music = request.query_params.get("purpose") == "music"
-        if int(request.headers.get("content-length") or 0) > (MAX_MUSIC if music else max(media_cap, MAX_IMAGE)):
-            raise HTTPException(413, "Music is too large (max 5 MB)" if music else f"File too large (max {settings.max_media_mb} MB)")
+        if int(request.headers.get("content-length") or 0) > (music_cap if music else max(media_cap, image_cap)):
+            raise HTTPException(413, f"Music is too large (max {settings.max_music_mb} MB)" if music else f"File too large (max {settings.max_media_mb} MB)")
 
         def check_music(kind, ext):
             if music and (kind != "audio" or ext not in MUSIC_EXT):
@@ -479,8 +492,8 @@ def create_app(settings: Settings, guard: auth.LoginGuard | None = None, cloud: 
                             head = b""
                     else:
                         fh.write(chunk)
-                    if size > (MAX_IMAGE if kind == "image" else MAX_MUSIC if music else media_cap):
-                        raise HTTPException(413, "Image too large (max 2 MB)" if kind == "image" else "Music is too large (max 5 MB)" if music else f"File too large (max {settings.max_media_mb} MB)")
+                    if size > (image_cap if kind == "image" else music_cap if music else media_cap):
+                        raise HTTPException(413, f"Image too large (max {settings.max_image_mb} MB)" if kind == "image" else f"Music is too large (max {settings.max_music_mb} MB)" if music else f"File too large (max {settings.max_media_mb} MB)")
                 if kind is None:  # tiny body
                     sniffed = sniff_upload(head)
                     if not sniffed:
@@ -759,6 +772,108 @@ def create_app(settings: Settings, guard: auth.LoginGuard | None = None, cloud: 
         if not row:
             raise HTTPException(404, "Not found")
         return row
+
+    # ---- platform settings and data clean-up (Super Admin) ---------------------------------------
+    def conf_view() -> dict:
+        eff = conf_effective()
+        groups = [{"id": g, "label": label} for g, label in adminconf_mod.GROUPS]
+        specs = [{"key": k, **spec, "default": conf_defaults[k], "value": eff[k], "changed": eff[k] != conf_defaults[k]} for k, spec in adminconf_mod.SPECS.items()]
+        changes = sorted(db.ai_audit_list(action="settings", limit=8)["rows"] + db.ai_audit_list(action="cleanup", limit=8)["rows"], key=lambda r: -r["ts"])[:8]
+        return {"groups": groups, "settings": specs, "changes": [{"ts": r["ts"], "username": r["username"], "message": r["message"]} for r in changes]}
+
+    @app.get("/api/admin/settings")
+    async def admin_settings_get(admin: dict = Depends(admin_dep)):
+        return conf_view()
+
+    @app.put("/api/admin/settings")
+    async def admin_settings_put(request: Request, admin: dict = Depends(admin_dep)):
+        body = await request.json()
+        if not isinstance(body, dict) or not body:
+            raise ApiError(400, "Nothing to change.", "bad_request")
+        cur, new = conf_effective(), {}
+        for k, v in body.items():
+            if k not in adminconf_mod.SPECS:
+                raise ApiError(400, "Unknown setting.", "bad_request")
+            try:
+                new[k] = adminconf_mod.clean(k, v)
+            except ValueError as e:
+                raise ApiError(400, str(e), "bad_request") from None
+        changed = {k: v for k, v in new.items() if cur[k] != v}
+        for k, v in changed.items():
+            if v == conf_defaults[k]:
+                db.app_unset([k])
+            else:
+                db.app_set({k: v})
+        if changed:
+            adminconf_mod.apply(settings, guard, conf_effective())
+            ai_note(admin, request, "settings", "Changed " + ", ".join(f"{adminconf_mod.SPECS[k]['label'].lower()} {cur[k]} to {v}" for k, v in changed.items()))
+        return conf_view()
+
+    @app.post("/api/admin/settings/reset")
+    async def admin_settings_reset(request: Request, admin: dict = Depends(admin_dep)):
+        body = await request.json()
+        keys = list(adminconf_mod.SPECS) if body.get("keys") == "all" else [k for k in (body.get("keys") or []) if k in adminconf_mod.SPECS]
+        cur = conf_effective()
+        back = [k for k in keys if cur[k] != conf_defaults[k]]
+        db.app_unset(keys)
+        adminconf_mod.apply(settings, guard, conf_effective())
+        if back:
+            ai_note(admin, request, "settings", "Reset to the default: " + ", ".join(adminconf_mod.SPECS[k]["label"].lower() for k in back))
+        return conf_view()
+
+    def storage_view() -> dict:
+        up = adminconf_mod.scan_uploads(db, settings.uploads_dir)
+        try:
+            db_bytes = settings.db_path.stat().st_size
+        except OSError:
+            db_bytes = 0
+        return {"counts": db.storage_counts(), "db_bytes": db_bytes, "uploads": {k: up[k] for k in ("files", "bytes", "unused_files", "unused_bytes")}}
+
+    @app.get("/api/admin/storage")
+    async def admin_storage(admin: dict = Depends(admin_dep)):
+        return storage_view()
+
+    @app.get("/api/admin/quizzes")
+    async def admin_quizzes(admin: dict = Depends(admin_dep)):
+        return db.quiz_overview()
+
+    @app.post("/api/admin/quizzes/delete")
+    async def admin_quizzes_delete(request: Request, admin: dict = Depends(admin_dep)):
+        body = await request.json()
+        raw = body.get("ids") if isinstance(body, dict) else None
+        if not isinstance(raw, list) or not raw or len(raw) > 500:
+            raise ApiError(400, "Choose between 1 and 500 quizzes to delete.", "bad_request")
+        try:
+            ids = sorted({int(i) for i in raw})
+        except (TypeError, ValueError):
+            raise ApiError(400, "Bad request", "bad_request") from None
+        titles = [q["title"] for q in db.quiz_overview() if q["id"] in set(ids)]
+        deleted = db.delete_quizzes(ids)
+        if deleted:
+            shown = "; ".join(t[:40] for t in titles[:5]) + (f" and {len(titles) - 5} more" if len(titles) > 5 else "")
+            ai_note(admin, request, "cleanup", f"Deleted {deleted} quiz{'zes' if deleted != 1 else ''}: {shown}")
+        return {"deleted": deleted, "storage": storage_view()}
+
+    @app.post("/api/admin/uploads/cleanup")
+    async def admin_uploads_cleanup(request: Request, admin: dict = Depends(admin_dep)):
+        body = await request.json()
+        dry = not (isinstance(body, dict) and body.get("dry_run") is False)
+        scan = adminconf_mod.scan_uploads(db, settings.uploads_dir)
+        if dry:
+            return {"dry_run": True, "unused_files": scan["unused_files"], "unused_bytes": scan["unused_bytes"]}
+        gone = freed = 0
+        for name in scan["names"]:
+            path = settings.uploads_dir / name
+            try:
+                size = path.stat().st_size
+                path.unlink()
+                gone += 1
+                freed += size
+            except OSError:
+                continue
+        if gone:
+            ai_note(admin, request, "cleanup", f"Deleted {gone} unused uploaded file{'s' if gone != 1 else ''} ({freed // 1024} KB)")
+        return {"dry_run": False, "deleted": gone, "freed_bytes": freed, "storage": storage_view()}
 
     # ---- personal access tokens and the MCP server --------------------------------------------------
     mcp_limiter = mcp_mod.RateLimiter()

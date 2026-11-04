@@ -424,3 +424,37 @@ def test_music_is_capped_at_five_megabytes_and_limited_to_a_few_formats(host):
     png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
     assert host.post("/api/uploads?purpose=music", content=png).status_code == 400
     assert host.post("/api/uploads", content=flac).status_code == 200                           # other audio (question clips) is unchanged
+
+
+# ---- what players' phones receive ------------------------------------------------------------------------------------------
+
+def test_phones_get_the_background_description_and_music_only_while_waiting(app, host):
+    import asyncio
+    from quickz.engine import GameManager
+    song, bg = "/uploads/0011223344556677.mp3", "/uploads/fedcba9876543210.webp"
+    qid = host.post("/api/quizzes", json={"title": "Party", "description": "Welcome! **Be nice.**", "screen_bg": bg, "lobby_music": song, "questions": [QUESTION]}).json()["id"]
+
+    async def go():
+        g = GameManager(app.state.db).create(qid, {})
+        p = g.join("Pat")
+        lobby = g.view_player(p, g._ranks())
+        assert (lobby["bg"], lobby["music"], lobby["description"]) == (bg, song, "Welcome! **Be nice.**")
+        assert g.view_screen(g._ranks())["music"] == song
+        await g.next()
+        started = g.view_player(p, g._ranks())
+        assert started["music"] == "" and started["bg"] == bg                      # the music stops with the lobby; the picture stays
+        quiet = GameManager(app.state.db).create(qid, {"phone_music": False})
+        q = quiet.join("Quin")
+        assert quiet.view_player(q, quiet._ranks())["music"] == "" and quiet.view_screen(quiet._ranks())["music"] == song      # off for phones, still on for the big screen
+
+    asyncio.run(go())
+
+
+def test_the_phone_music_switch_is_a_normal_game_setting_and_the_library_knows_which_quizzes_have_music(host):
+    from quickz.engine import DEFAULT_SETTINGS, clean_setting
+    assert DEFAULT_SETTINGS["phone_music"] is True
+    assert clean_setting("phone_music", False) == (True, False) and clean_setting("phone_music", "no")[0] is False
+    with_music = host.post("/api/quizzes", json={"title": "Music", "lobby_music": "/uploads/0011223344556677.wav", "questions": [QUESTION]}).json()["id"]
+    plain = host.post("/api/quizzes", json={"title": "Plain", "questions": [QUESTION]}).json()["id"]
+    flags = {q["id"]: q["has_music"] for q in host.get("/api/quizzes").json()}
+    assert flags[with_music] == 1 and flags[plain] == 0

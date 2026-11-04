@@ -367,24 +367,6 @@ const LobbyMusic = {
   },
 };
 
-/** The quiz's background picture fills the whole screen at any resolution (scaled to cover, centred), under a soft wash so the text stays readable. */
-let bgNow = null;
-function applyBackground(url) {
-  url = url || '';
-  if (url === bgNow) return;
-  bgNow = url;
-  let layer = document.querySelector('.screen-bg');
-  if (!url) { layer?.remove(); document.body.classList.remove('has-bg'); return; }
-  const done = () => {
-    if (!layer) { layer = el('div', { class: 'screen-bg', 'aria-hidden': 'true' }); document.body.prepend(layer); }
-    layer.style.backgroundImage = `url("${url.replace(/"/g, '%22')}")`;
-    document.body.classList.add('has-bg');
-  };
-  const probe = new Image();                                // show it only once it has loaded, so there is no flash of an empty frame
-  probe.onload = done; probe.onerror = () => { bgNow = null; };
-  probe.src = url;
-}
-
 function render(v) {
   applySkin(v.skin);
   applyBackground(v.bg);

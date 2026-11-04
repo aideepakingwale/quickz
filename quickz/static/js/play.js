@@ -46,6 +46,7 @@ async function start() {
     $('#snd').replaceChildren(icon(Sound.on ? 'volume' : 'mute'));
   });
   document.addEventListener('pointerdown', () => Sound.unlock(), { once: true });
+  document.addEventListener('pointerdown', () => PhoneMusic.retry());          // a phone may hold the music back until the first tap
 
   if (!code) { location.href = '/'; return; }
   let info;
@@ -174,8 +175,12 @@ function showExtras(v) {
   if (!on) { const t = $('#react-tray'); if (t) t.hidden = true; }
 }
 
+let lastView = null;
 function render(v) {
+  lastView = v;
   applySkin(v.skin);
+  applyBackground(v.bg);                                 // the quiz's picture sits behind the whole game
+  PhoneMusic.sync(v);                                    // waiting-screen music: lobby only
   preloadImages(v.preload);
   showExtras(v);
   header(v);
@@ -191,19 +196,64 @@ function lobbyScene(v) {
   setMood(''); ring = bar = null; revealedFor = null; askedFor = null; jokerOn = false;
   showScene('lobby', () => {
     const count = el('span', { id: 'lobby-n' }, v.players);
+    const descBox = v.description ? el('div', { class: 'desc-box p-desc' }, mdNode(v.description, 'desc')) : null;      // what the host wrote for the lobby, until the quiz starts
+    if (descBox) fitPhoneDescription(descBox);
+    const musicBtn = v.music ? el('button', { class: 'btn sm music-btn', type: 'button', onclick: () => { PhoneMusic.setPref(!PhoneMusic.pref()); PhoneMusic.sync(lastView || v); paintMusic(); } }) : null;
+    function paintMusic() { if (!musicBtn) return; const on = PhoneMusic.pref(); musicBtn.setAttribute('aria-pressed', String(on)); musicBtn.replaceChildren(icon(on ? 'volume' : 'mute'), on ? 'Music on' : 'Music off'); }
+    paintMusic();
     return {
-      root: sceneEl('lobby',
+      root: sceneEl('lobby' + (v.description ? ' has-desc' : ''),
         el('div', { class: 'me-avatar', 'aria-hidden': 'true' }, v.me.avatar),
         el('div', {}, el('h1', {}, `You're in, ${v.me.nickname}!`), el('p', { class: 'muted', style: { marginTop: '6px' } }, v.title)),
+        descBox,
         el('div', { class: 'dots', 'aria-hidden': 'true' }, el('span'), el('span'), el('span')),
         el('p', { class: 'muted' }, 'Waiting for the host to start…'),
         el('div', { class: 'chip brand count' }, icon('users'), count, ' ready'),
+        musicBtn,
         v.jokers ? el('div', { class: 'joker-tip' }, icon('bolt'), el('div', {}, el('b', {}, 'Double up is on'), el('span', {}, 'Once in the game you can double the points of one question. Pick it wisely.'))) : null,
         el('p', { class: 'tip faint' }, 'Keep this screen open and watch the big screen. It plays the sound for everyone, so your phone stays quiet (the speaker button turns it on).'), siteFooter('p-foot')),
       update(nv) { count.textContent = nv.players; },
     };
   });
 }
+
+/** A long lobby description gets a box that fits the phone and scrolls by itself (timers, not animation frames, so it also runs in a background tab). */
+function fitPhoneDescription(box) {
+  const text = box.firstElementChild;
+  let tries = 0;
+  const fit = () => {
+    if (!box.isConnected) { if (++tries < 100) setTimeout(fit, 50); return; }
+    const room = Math.round(Math.max(90, Math.min(window.innerHeight * 0.22, 200)));
+    box.style.maxHeight = room + 'px';
+    const over = text.scrollHeight - room;
+    box.classList.toggle('scrolling', over > 4);
+    if (over > 4) { box.style.setProperty('--shift', over + 'px'); box.style.setProperty('--dur', Math.max(10, 6 + over / 22).toFixed(1) + 's'); }
+  };
+  setTimeout(fit, 50);
+  addEventListener('resize', () => { if (box.isConnected) fit(); });
+}
+
+/** The quiz's own waiting-screen music on this phone: only while players wait, stops when the quiz starts, and the player can switch it off. */
+const PhoneMusic = {
+  el: null, url: '',
+  pref() { try { return localStorage.getItem('quickz:pmusic') !== 'off'; } catch (e) { return true; } },
+  setPref(on) { try { localStorage.setItem('quickz:pmusic', on ? 'on' : 'off'); } catch (e) { /* private window */ } },
+  sync(v) { if (v.phase === 'lobby' && v.music && this.pref()) this.start(v.music); else this.stop(); },
+  start(url) {
+    if (!this.el || this.url !== url) { this.stop(true); this.el = new Audio(url); this.el.loop = true; this.el.preload = 'auto'; this.url = url; }
+    this.el.volume = 0.6;
+    this.retry();
+  },
+  retry() { if (this.el && this.el.paused) { const p = this.el.play(); if (p && p.catch) p.catch(() => { /* waits for the next tap */ }); } },
+  stop(now = false) {
+    const a = this.el;
+    if (!a) return;
+    this.el = null; this.url = '';
+    if (now || a.paused) { a.pause(); return; }
+    let v = a.volume;
+    const t = setInterval(() => { v -= 0.1; if (v <= 0.02) { clearInterval(t); a.pause(); a.currentTime = 0; } else a.volume = v; }, 70);
+  },
+};
 
 /* ---- the clip (if this device should play it). One element per question, re-used across scene rebuilds so a tap on
    an answer never restarts the audio. */
