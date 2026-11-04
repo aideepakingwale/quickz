@@ -643,6 +643,27 @@ def create_app(settings: Settings, guard: auth.LoginGuard | None = None, cloud: 
             ai_note(admin, request, "config", f"{ai_mod.PROVIDERS[name]['label']}: {', '.join(notes) or 'updated'}", provider=name)
         return ai_admin_view()
 
+    @app.get("/api/admin/ai/providers/{name}/models")
+    async def ai_admin_models(name: str, request: Request, admin: dict = Depends(admin_dep)):
+        if name not in ai_mod.PROVIDERS:
+            raise HTTPException(404, "Unknown service")
+        cfg = db.ai_providers(with_keys=True)[name]
+        if not cfg["has_key"]:
+            raise ApiError(400, "Save an API key first.", "no_key")
+        t0 = time.time()
+        row = {"user_id": admin["id"], "username": admin["username"], "action": "models", "provider": name, "model": "", "ip": client_ip(request)}
+        try:
+            models = await asyncio.to_thread(ai_mod.list_models, name, cfg, vault.open(cfg["key_enc"]), db.ai_settings()["timeout_s"])
+            row.update(status="ok", message=f"{len(models)} models listed.")
+        except ai_mod.AIError as e:
+            row.update(status=e.status, message=e.message)
+            row["latency_ms"] = int((time.time() - t0) * 1000)
+            db.ai_audit_add(row)
+            raise ApiError(502, e.message, "models_failed")
+        row["latency_ms"] = int((time.time() - t0) * 1000)
+        db.ai_audit_add(row)
+        return {"models": models, "current": cfg["model"] or ai_mod.PROVIDERS[name]["model"]}
+
     @app.post("/api/admin/ai/providers/{name}/test")
     async def ai_admin_test(name: str, request: Request, admin: dict = Depends(admin_dep)):
         if name not in ai_mod.PROVIDERS:

@@ -58,7 +58,7 @@ UNDER_AGE = ("5-7", "8-10", "11-13")          # these audiences also get the str
 PROVIDERS = {
     "gemini": {"label": "Google Gemini (AI Studio)", "kind": "gemini", "model": "gemini-2.5-flash",
                "base": "https://generativelanguage.googleapis.com/v1beta", "key_url": "https://aistudio.google.com/apikey"},
-    "groq": {"label": "Groq", "kind": "openai", "model": "llama-3.3-70b-versatile", "json_mode": True,
+    "groq": {"label": "Groq", "kind": "openai", "model": "openai/gpt-oss-120b", "json_mode": True,
              "base": "https://api.groq.com/openai/v1", "key_url": "https://console.groq.com/keys"},
     "openrouter": {"label": "OpenRouter (free models)", "kind": "openai", "model": "meta-llama/llama-3.3-70b-instruct:free",
                    "base": "https://openrouter.ai/api/v1", "key_url": "https://openrouter.ai/keys"},
@@ -286,13 +286,13 @@ def provider_url(name: str, cfg: dict) -> str:
     return base.rstrip("/")
 
 
-def http_post(url: str, headers: dict, body: dict, timeout: float) -> tuple[int, dict]:
-    """One JSON POST. Redirects are not followed (a redirect could send the key somewhere else)."""
+def http_post(url: str, headers: dict, body: dict | None, timeout: float, method: str = "POST") -> tuple[int, dict]:
+    """One JSON request (POST, or GET when method="GET"). Redirects are not followed (a redirect could send the key somewhere else)."""
     class _NoRedirect(urllib.request.HTTPRedirectHandler):
         def redirect_request(self, *a, **k):
             return None
     opener = urllib.request.build_opener(_NoRedirect)
-    req = urllib.request.Request(url, data=json.dumps(body).encode(), headers={"Content-Type": "application/json", "Accept": "application/json", "User-Agent": "DiQuizBuzz/1.0 (+https://github.com/aideepakingwale/quickz)", **headers}, method="POST")
+    req = urllib.request.Request(url, data=None if body is None else json.dumps(body).encode(), headers={"Content-Type": "application/json", "Accept": "application/json", "User-Agent": "DiQuizBuzz/1.0 (+https://github.com/aideepakingwale/quickz)", **headers}, method=method)
     try:
         with opener.open(req, timeout=timeout) as resp:
             raw = resp.read(1_000_000)
@@ -306,6 +306,40 @@ def http_post(url: str, headers: dict, body: dict, timeout: float) -> tuple[int,
         raise AIError("Could not reach the AI service (network error or timeout).", "error") from e
     except ValueError as e:
         raise AIError("The AI service sent a reply that could not be read.", "error") from e
+
+
+NOT_CHAT = ("whisper", "tts", "guard", "embed", "moderation", "orpheus", "transcrib", "rerank", "image", "imagen", "veo", "aqa", "playai")
+
+
+def list_models(name: str, cfg: dict, api_key: str, timeout: float) -> list[str]:
+    """Model names this service offers for writing text, so the admin can pick instead of typing. Raises AIError."""
+    spec = PROVIDERS[name]
+    base = provider_url(name, cfg)
+    if spec["kind"] == "gemini":
+        code, data = http_post(f"{base}/models?pageSize=200", {"x-goog-api-key": api_key}, None, timeout, "GET")
+    else:
+        code, data = http_post(f"{base}/models", {"Authorization": f"Bearer {api_key}"}, None, timeout, "GET")
+    if code in (401, 403):
+        raise AIError(f"The AI service refused the key (HTTP {code}). Ask the Super Admin to check the key and that it is for this service.", "error")
+    if code == 429:
+        raise AIError("The AI service is rate-limited right now.", "rate_limited")
+    if code >= 400 or not isinstance(data, dict):
+        raise AIError(f"This service did not give a model list (HTTP {code}). Type the model name instead.", "error")
+    names: list[str] = []
+    if spec["kind"] == "gemini":
+        for m in data.get("models") or []:
+            if isinstance(m, dict) and "generateContent" in (m.get("supportedGenerationMethods") or []):
+                names.append(str(m.get("name", "")).removeprefix("models/"))
+    else:
+        for m in data.get("data") or []:
+            if isinstance(m, dict) and m.get("active", True) is not False:
+                names.append(str(m.get("id", "")))
+        if name == "openrouter":
+            names = [n for n in names if n.endswith(":free")]
+    keep = [n for n in dict.fromkeys(names) if n and len(n) <= 100 and not any(w in n.lower() for w in NOT_CHAT)]
+    if not keep:
+        raise AIError("This service listed no usable models. Type the model name instead.", "error")
+    return sorted(keep)
 
 
 def call_provider(name: str, cfg: dict, api_key: str, system: str, user: str, timeout: float) -> dict:

@@ -127,7 +127,18 @@ async function renderAISettings() {
   function providerCard(p) {
     const keyIn = el('input', { class: 'input', type: 'password', autocomplete: 'off', spellcheck: false, 'aria-label': `${p.label} API key`,
       placeholder: p.has_key ? `Saved (${p.key_hint}). Paste a new key to replace it` : 'Paste the API key' });
-    const model = el('input', { class: 'input', value: p.model, placeholder: p.model_default || 'model name', 'aria-label': `${p.label} model`, maxLength: 100 });
+    const model = el('input', { class: 'input', value: p.model, placeholder: p.model_default || 'model name', 'aria-label': `${p.label} model`, maxLength: 100, list: `models-${p.name}`, autocomplete: 'off' });
+    const modelList = el('datalist', { id: `models-${p.name}` });
+    const loadBtn = el('button', { class: 'btn sm', type: 'button', disabled: !p.has_key, title: p.has_key ? '' : 'Save an API key first', onclick: async () => {
+      loadBtn.disabled = true; loadBtn.textContent = 'Loading…';
+      try {
+        const r = await api(`/api/admin/ai/providers/${p.name}/models`);
+        modelList.replaceChildren(...r.models.map(m => el('option', { value: m })));
+        ui.toast(`${r.models.length} models found. Click the Model box to choose.`, 'success');
+        model.focus(); model.select();
+      } catch (e) { ui.toast(e.message, 'error'); }
+      loadBtn.disabled = !p.has_key; loadBtn.textContent = 'Load model list';
+    } }, 'Load model list');
     const acct = p.needs_account ? el('input', { class: 'input', value: p.account_id, placeholder: '32-character account ID', 'aria-label': 'Cloudflare account ID', maxLength: 64 }) : null;
     const base = p.needs_base ? el('input', { class: 'input', value: p.base_url, placeholder: 'https://example.com/v1', 'aria-label': 'Service address', maxLength: 200 }) : null;
     const prio = el('input', { class: 'input', type: 'number', min: 1, max: 99, value: p.priority, 'aria-label': 'Fallback order', style: { maxWidth: '5rem' } });
@@ -144,7 +155,7 @@ async function renderAISettings() {
       el('div', { class: 'row nowrap' }, el('h3', { class: 'grow' }, p.label), state, chosen ? el('span', { class: 'chip brand' }, 'In use') : null),
       el('div', { class: 'ai-grid' },
         el('div', { class: 'field' }, el('label', {}, 'API key'), keyIn, el('span', { class: 'hint' }, p.key_url ? el('span', {}, 'Free key: ', el('a', { href: p.key_url, target: '_blank', rel: 'noopener' }, p.key_url.replace('https://', ''))) : 'From your provider.')),
-        el('div', { class: 'field' }, el('label', {}, 'Model'), model, el('span', { class: 'hint' }, 'Free models change. Check the provider’s list if requests fail.')),
+        el('div', { class: 'field' }, el('label', {}, 'Model'), el('div', { class: 'row nowrap' }, model, modelList, loadBtn), el('span', { class: 'hint' }, 'Free models change. Load the list from the service, or type a name. Save to apply.')),
         acct ? el('div', { class: 'field' }, el('label', {}, 'Account ID'), acct) : null, base ? el('div', { class: 'field' }, el('label', {}, 'Service address'), base) : null,
         el('div', { class: 'field' }, el('label', {}, 'Fallback order'), prio, el('span', { class: 'hint' }, 'Lower numbers are tried first.'))),
       el('div', { class: 'row', style: { gap: '.5rem', flexWrap: 'wrap' } },
@@ -197,13 +208,13 @@ async function renderAISettings() {
       return [el('span', {}, r.message || '')];
     };
     const rows = logRows.map(r => el('tr', { class: 'clickable', tabIndex: 0, onclick: () => detail(r.id), onkeydown: e => { if (e.key === 'Enter') detail(r.id); } },
-      el('td', { class: 'muted nowrap' }, timeAgo(r.ts)), el('td', {}, r.username || '—'), el('td', {}, { generate: 'Drafting', test: 'Key test', config: 'Settings' }[r.action] || r.action),
+      el('td', { class: 'muted nowrap' }, timeAgo(r.ts)), el('td', {}, r.username || '—'), el('td', {}, { generate: 'Drafting', test: 'Key test', models: 'Model list', config: 'Settings' }[r.action] || r.action),
       el('td', {}, aiChip(r.status)), el('td', {}, summary(r)), el('td', {}, r.provider ? `${r.provider}` : '—'),
       el('td', { class: 'num' }, r.action === 'generate' ? `${r.returned}/${r.requested} · ${r.accepted} added` : ''), el('td', { class: 'num' }, r.tokens_in + r.tokens_out ? (r.tokens_in + r.tokens_out).toLocaleString() : ''),
       el('td', { class: 'num' }, r.latency_ms ? (r.latency_ms / 1000).toFixed(1) + ' s' : '')));
     logBox.replaceChildren(...[
       el('div', { class: 'row', style: { gap: '.5rem', flexWrap: 'wrap', marginBottom: '.6rem' } },
-        sel('status', 'Any result', Object.entries(AI_STATUS).map(([v, [, l]]) => [v, l])), sel('action', 'Any action', [['generate', 'Drafting'], ['test', 'Key test'], ['config', 'Settings']]), userIn,
+        sel('status', 'Any result', Object.entries(AI_STATUS).map(([v, [, l]]) => [v, l])), sel('action', 'Any action', [['generate', 'Drafting'], ['test', 'Key test'], ['models', 'Model list'], ['config', 'Settings']]), userIn,
         sel('days', 'Range', []), el('span', { class: 'grow' }),
         el('a', { class: 'btn sm', href: `/api/admin/ai/audit.csv?days=${filters.days}`, download: 'ai-audit.csv' }, icon('download'), 'Export CSV')),
       logRows.length ? el('div', { class: 'tbl-wrap' }, el('table', { class: 'tbl' }, el('thead', {}, el('tr', {}, ['When', 'Who', 'What', 'Result', 'Details', 'Service', 'Questions', 'Tokens', 'Time'].map(h => el('th', {}, h)))), el('tbody', {}, rows)))

@@ -394,3 +394,36 @@ def test_the_requested_type_is_enforced(host, fake):
 def test_the_prompt_spells_out_the_rules_for_the_chosen_type(host, fake):
     ask(host, fake, [{"type": "mcq", "text": "Capital of France?", "options": ["Berlin", "Paris", "Rome"], "correct": [1]}], "mcq", 1)
     assert 'exactly 4 different options' in fake.calls[-1]["user"] and "all of the above" in fake.calls[-1]["user"]
+
+
+# ---- model list for the drop-down ------------------------------------------------------------------------------------
+
+def test_model_list_per_service(app, admin, monkeypatch):
+    seen = []
+
+    def get(url, headers, body, timeout, method="POST"):
+        seen.append((url, method, body))
+        if "generativelanguage" in url:
+            return 200, {"models": [{"name": "models/gemini-2.5-flash", "supportedGenerationMethods": ["generateContent"]},
+                                    {"name": "models/embedding-001", "supportedGenerationMethods": ["embedContent"]}]}
+        return 200, {"data": [{"id": "openai/gpt-oss-120b", "active": True}, {"id": "whisper-large-v3", "active": True},
+                              {"id": "old-model", "active": False}, {"id": "meta/x:free"}, {"id": "paid/y"}]}
+
+    monkeypatch.setattr(ai, "http_post", get)
+    configure(admin, name="gemini")
+    assert admin.get("/api/admin/ai/providers/gemini/models").json()["models"] == ["gemini-2.5-flash"]
+    configure(admin, name="groq", key="gsk_testkey1234567")
+    assert admin.get("/api/admin/ai/providers/groq/models").json()["models"] == ["meta/x:free", "openai/gpt-oss-120b", "paid/y"]
+    assert all(m == "GET" and b is None for _, m, b in seen)
+    assert audit(admin, action="models")[0]["status"] == "ok"
+
+
+def test_model_list_needs_key_admin_and_reports_errors(app, admin, monkeypatch):
+    assert admin.get("/api/admin/ai/providers/groq/models").status_code == 400
+    configure(admin, name="groq", key="gsk_testkey1234567")
+    monkeypatch.setattr(ai, "http_post", lambda *a, **k: (403, {}))
+    r = admin.get("/api/admin/ai/providers/groq/models")
+    assert r.status_code == 502 and "HTTP 403" in str(r.json())
+    assert audit(admin, action="models")[0]["status"] == "error"
+    host = TestClient(app, headers=CSRF)
+    assert host.get("/api/admin/ai/providers/groq/models").status_code in (401, 403)
