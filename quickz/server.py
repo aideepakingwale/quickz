@@ -24,6 +24,8 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocke
 from fastapi.responses import RedirectResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from . import ai as ai_mod
+from . import mcp as mcp_mod
 from . import auth
 from .cloud import CloudSync
 from .config import Settings
@@ -297,6 +299,7 @@ def create_app(settings: Settings, guard: auth.LoginGuard | None = None, cloud: 
     @app.post("/api/auth/logout-all")
     async def auth_logout_all(request: Request, response: Response, user: dict = Depends(user_pending)):
         db.delete_user_sessions(user["id"])
+        db.revoke_user_tokens(user["id"])
         response.delete_cookie(COOKIE, path="/")
         return {"ok": True}
 
@@ -372,6 +375,7 @@ def create_app(settings: Settings, guard: auth.LoginGuard | None = None, cloud: 
         temp = auth.temp_password()
         db.update_user(user_id, password_hash=auth.hash_password(temp), must_change=1)
         db.delete_user_sessions(user_id)
+        db.revoke_user_tokens(user_id)
         return {"temp_password": temp}
 
     # ---- quizzes (owner-scoped) --------------------------------------------------------------
@@ -516,6 +520,237 @@ def create_app(settings: Settings, guard: auth.LoginGuard | None = None, cloud: 
     @app.get("/api/backup/status")
     async def backup_status(admin: dict = Depends(admin_dep)):
         return cloud.status if cloud else {"enabled": False}
+
+    # ---- AI-assisted question drafting ----------------------------------------------------------
+    vault = ai_mod.Vault(settings.data_dir)
+    ai_state = {"purged": 0.0}
+
+    def ai_note(user: dict, request: Request, action: str, message: str, status: str = "ok", provider: str = ""):
+        db.ai_audit_add({"user_id": user["id"], "username": user["username"], "action": action, "status": status, "provider": provider,
+                         "message": message, "ip": client_ip(request)})
+
+    @app.get("/api/ai/options")
+    async def ai_options(user: dict = Depends(user_dep)):
+        st = db.ai_settings()
+        order = ai_mod.provider_order(st, db.ai_providers(with_keys=True))
+        used = db.ai_audit_count(user["id"], time.time() - 86400, ("ok", "partial", "error", "refused"))
+        return {"available": bool(st["enabled"] and order), "enabled": st["enabled"], "configured": bool(order),
+                "max_questions": st["max_questions"], "remaining_today": max(0, st["per_user_day"] - used),
+                "difficulties": ai_mod.DIFFICULTIES, "levels": ai_mod.LEVELS, "quiz_types": ai_mod.QUIZ_TYPES,
+                "question_types": ai_mod.QUESTION_TYPES, "age_groups": ai_mod.AGE_LABELS, "languages": ai_mod.LANGUAGES}
+
+    @app.post("/api/ai/generate")
+    async def ai_generate(request: Request, user: dict = Depends(user_dep)):
+        now = time.time()
+        if now - ai_state["purged"] > 3600:                       # keep the audit log within the retention period
+            ai_state["purged"] = now
+            keep = now - db.ai_settings()["retention_days"] * 86400
+            db.ai_audit_purge(keep)
+            db.mcp_audit_purge(keep)
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return await ai_mod.generate(db, vault, user, body, client_ip(request))
+        except ai_mod.AIError as e:
+            raise ApiError(e.http, e.message, e.status) from e
+
+    @app.post("/api/ai/accept")
+    async def ai_accept(request: Request, user: dict = Depends(user_dep)):
+        """The host tells us how many drafted questions they added, so the audit log shows what was actually used."""
+        body = await request.json()
+        try:
+            db.ai_audit_accept(int(body.get("audit_id")), user["id"], int(body.get("count")))
+        except (TypeError, ValueError):
+            raise ApiError(400, "Bad request", "bad_request") from None
+        return {"ok": True}
+
+    def ai_admin_view() -> dict:
+        st, now = db.ai_settings(), time.time()
+        provs = db.ai_providers()
+        return {"settings": st, "providers": [{"name": n, "label": spec["label"], "model_default": spec["model"], "key_url": spec["key_url"],
+                                               "needs_account": bool(spec.get("needs_account")), "needs_base": bool(spec.get("needs_base")),
+                                               **provs[n]} for n, spec in ai_mod.PROVIDERS.items()],
+                "stats_day": db.ai_stats(now - 86400), "stats_week": db.ai_stats(now - 7 * 86400),
+                "builtin_blocked": len(ai_mod.BLOCKED_TERMS)}
+
+    @app.get("/api/admin/ai")
+    async def ai_admin_get(admin: dict = Depends(admin_dep)):
+        return ai_admin_view()
+
+    @app.put("/api/admin/ai/settings")
+    async def ai_admin_settings(request: Request, admin: dict = Depends(admin_dep)):
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise ApiError(400, "Bad request", "bad_request")
+        cur, new = db.ai_settings(), {}
+        for k in ai_mod.DEFAULT_SETTINGS:
+            if k not in body:
+                continue
+            v = body[k]
+            if k in ("enabled", "fallback", "mcp_enabled"):
+                v = bool(v)
+            elif k == "active_provider":
+                v = v if v in ai_mod.PROVIDERS else ""
+            elif k == "blocked_terms":
+                v = "\n".join(ai_mod.clean_line(t, 60) for t in str(v).splitlines() if t.strip())[:4000]
+            else:
+                lo, hi = ai_mod.SETTING_LIMITS[k]
+                try:
+                    v = max(lo, min(hi, int(v)))
+                except (TypeError, ValueError):
+                    raise ApiError(400, f"{k.replace('_', ' ')} must be a number", "bad_request") from None
+            new[k] = v
+        changed = {k: v for k, v in new.items() if cur.get(k) != v}
+        if changed:
+            db.ai_set_settings(changed)
+            shown = ", ".join(f"{k.replace('_', ' ')}: " + ("updated" if k == "blocked_terms" else str(v).lower()) for k, v in changed.items())
+            ai_note(admin, request, "config", "Settings changed: " + shown)
+        return ai_admin_view()
+
+    @app.put("/api/admin/ai/providers/{name}")
+    async def ai_admin_provider(name: str, request: Request, admin: dict = Depends(admin_dep)):
+        if name not in ai_mod.PROVIDERS:
+            raise HTTPException(404, "Unknown service")
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise ApiError(400, "Bad request", "bad_request")
+        fields, notes = {}, []
+        if "enabled" in body:
+            fields["enabled"] = int(bool(body["enabled"]))
+            notes.append("enabled" if body["enabled"] else "disabled")
+        for k, lim in (("model", 100), ("base_url", 200), ("account_id", 64)):
+            if k in body:
+                fields[k] = ai_mod.clean_line(body[k], lim)
+                notes.append(f"{k} set")
+        if "priority" in body:
+            try:
+                fields["priority"] = max(1, min(99, int(body["priority"])))
+            except (TypeError, ValueError):
+                raise ApiError(400, "Priority must be a number", "bad_request") from None
+        key = str(body.get("api_key") or "").strip()
+        if key:
+            if len(key) < 8 or len(key) > 400 or re.search(r"\s", key):
+                raise ApiError(400, "That does not look like an API key.", "bad_request")
+            fields["key_enc"], fields["key_hint"] = vault.seal(key), ai_mod.key_hint(key)
+            notes.append("key replaced")
+        elif body.get("clear_key"):
+            fields["key_enc"], fields["key_hint"], fields["enabled"] = "", "", 0
+            notes.append("key removed")
+        if fields:
+            db.ai_save_provider(name, fields, admin["username"])
+            ai_note(admin, request, "config", f"{ai_mod.PROVIDERS[name]['label']}: {', '.join(notes) or 'updated'}", provider=name)
+        return ai_admin_view()
+
+    @app.post("/api/admin/ai/providers/{name}/test")
+    async def ai_admin_test(name: str, request: Request, admin: dict = Depends(admin_dep)):
+        if name not in ai_mod.PROVIDERS:
+            raise HTTPException(404, "Unknown service")
+        cfg = db.ai_providers(with_keys=True)[name]
+        if not cfg["has_key"]:
+            raise ApiError(400, "Save an API key first.", "no_key")
+        t0 = time.time()
+        row = {"user_id": admin["id"], "username": admin["username"], "action": "test", "provider": name,
+               "model": cfg["model"] or ai_mod.PROVIDERS[name]["model"], "ip": client_ip(request)}
+        try:
+            reply = await asyncio.to_thread(ai_mod.call_provider, name, cfg, vault.open(cfg["key_enc"]),
+                                            "You reply with JSON only.", 'Reply with exactly {"ok": true}', db.ai_settings()["timeout_s"])
+            ok, msg = True, "Connection works."
+            row.update(status="ok", message=msg, tokens_in=reply["tokens_in"], tokens_out=reply["tokens_out"])
+        except ai_mod.AIError as e:
+            ok, msg = False, e.message
+            row.update(status=e.status, message=msg)
+        row["latency_ms"] = int((time.time() - t0) * 1000)
+        db.ai_audit_add(row)
+        return {"ok": ok, "message": msg}
+
+    @app.get("/api/admin/ai/audit")
+    async def ai_admin_audit(status: str = "", user: str = "", action: str = "", days: int = 30, limit: int = 50, offset: int = 0,
+                             admin: dict = Depends(admin_dep)):
+        return db.ai_audit_list(status[:20], user[:40], action[:20], max(1, min(limit, 200)), max(0, offset),
+                                time.time() - max(1, min(days, 3650)) * 86400)
+
+    @app.get("/api/admin/ai/audit.csv")
+    async def ai_admin_audit_csv(days: int = 30, admin: dict = Depends(admin_dep)):
+        data = db.ai_audit_list(limit=100000, since=time.time() - max(1, min(days, 3650)) * 86400)
+        out = io.StringIO()
+        w = csv.writer(out)
+        w.writerow(["Time (UTC)", "User", "Action", "Status", "Service", "Model", "Topic", "Difficulty", "Level", "Quiz type", "Question type",
+                    "Age group", "Asked", "Returned", "Added", "Tokens in", "Tokens out", "Latency ms", "Note"])
+        for r in data["rows"]:
+            p = r["params"]
+            cells = [time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(r["ts"])), r["username"], r["action"], r["status"], r["provider"], r["model"],
+                     p.get("topic", ""), p.get("difficulty", ""), p.get("level", ""), p.get("quiz_type", ""), p.get("question_type", ""),
+                     p.get("age_group", ""), r["requested"], r["returned"], r["accepted"], r["tokens_in"], r["tokens_out"], r["latency_ms"], r["message"]]
+            w.writerow([("'" + c) if isinstance(c, str) and c[:1] in "=+-@" else c for c in cells])
+        return Response(out.getvalue(), media_type="text/csv", headers={"Content-Disposition": 'attachment; filename="ai-audit.csv"'})
+
+    @app.get("/api/admin/ai/audit/{audit_id}")
+    async def ai_admin_audit_one(audit_id: int, admin: dict = Depends(admin_dep)):
+        row = db.ai_audit_one(audit_id)
+        if not row:
+            raise HTTPException(404, "Not found")
+        return row
+
+    # ---- personal access tokens and the MCP server --------------------------------------------------
+    mcp_limiter = mcp_mod.RateLimiter()
+
+    def mcp_note(user: dict, tool: str, message: str):
+        db.mcp_audit_add({"user_id": user["id"], "username": user["username"], "tool": tool, "status": "ok", "message": message})
+
+    def token_view(r: dict) -> dict:
+        now = time.time()
+        state = "revoked" if r["revoked_at"] else "expired" if r["expires_at"] <= now else "active"
+        return {**r, "state": state}
+
+    @app.get("/api/tokens")
+    async def tokens_list(user: dict = Depends(user_dep)):
+        return {"enabled": db.ai_settings()["mcp_enabled"], "tokens": [token_view(r) for r in db.list_api_tokens(user["id"])],
+                "endpoint": settings.public_url.rstrip("/") + "/mcp"}
+
+    @app.post("/api/tokens")
+    async def tokens_create(request: Request, user: dict = Depends(user_dep)):
+        if not db.ai_settings()["mcp_enabled"]:
+            raise ApiError(403, "Assistant access is switched off. Ask a Super Admin to turn it on.", "mcp_off")
+        body = await request.json()
+        name = re.sub(r"\s+", " ", mcp_mod.TOKEN_NAME_RE.sub("", str(body.get("name") or ""))).strip()[:60]
+        if not name:
+            raise ApiError(400, "Give the token a name, such as the app you will use it in.", "bad_request")
+        scope = body.get("scope")
+        if scope not in ("read", "write"):
+            raise ApiError(400, "Choose read-only or read and write.", "bad_request")
+        try:
+            days = max(1, min(365, int(body.get("days", 90))))
+        except (TypeError, ValueError):
+            raise ApiError(400, "Days must be a number.", "bad_request") from None
+        if db.active_token_count(user["id"]) >= 10:
+            raise ApiError(400, "You already have 10 active tokens. Revoke one you no longer use.", "too_many")
+        token = mcp_mod.new_token()
+        token_id = db.create_api_token(user["id"], name, auth.hash_token(token), "\u2026" + token[-4:], scope, time.time() + days * 86400)
+        mcp_note(user, "token.create", f"{name} ({scope}, {days} days)")
+        return {"id": token_id, "token": token, "endpoint": settings.public_url.rstrip("/") + "/mcp"}
+
+    @app.delete("/api/tokens/{token_id}")
+    async def tokens_revoke(token_id: int, user: dict = Depends(user_dep)):
+        if not db.revoke_api_token(token_id, user["id"]):
+            raise HTTPException(404, "Token not found")
+        mcp_note(user, "token.revoke", f"token {token_id}")
+        return {"ok": True}
+
+    @app.post("/mcp")
+    async def mcp_endpoint(request: Request):
+        return await mcp_mod.handle_post(request, db, manager, settings, mcp_limiter)
+
+    @app.get("/mcp")
+    @app.delete("/mcp")
+    async def mcp_other():
+        # no server-initiated stream and no sessions to end: this server only answers POSTs
+        return Response(status_code=405, headers={"Allow": "POST"})
+
+    @app.get("/api/admin/mcp/audit")
+    async def mcp_admin_audit(user: str = "", status: str = "", days: int = 30, limit: int = 50, offset: int = 0, admin: dict = Depends(admin_dep)):
+        return db.mcp_audit_list(max(1, min(limit, 200)), max(0, offset), user[:40], status[:20], time.time() - max(1, min(days, 3650)) * 86400)
 
     # ---- games (owner-scoped) -----------------------------------------------------------------
     @app.post("/api/games")

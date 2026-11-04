@@ -74,7 +74,8 @@ function paintTopbar(active) {
       el('a', { href: '#/', 'aria-current': active === 'quizzes' ? 'page' : null }, 'Quizzes'),
       el('a', { href: '#/games', 'aria-current': active === 'games' ? 'page' : null }, 'Games'),
       el('a', { href: '#/events', 'aria-current': active === 'events' ? 'page' : null }, 'Events'),
-      isAdmin() ? el('a', { href: '#/team', 'aria-current': active === 'team' ? 'page' : null }, 'Team') : null),
+      isAdmin() ? el('a', { href: '#/team', 'aria-current': active === 'team' ? 'page' : null }, 'Team') : null,
+      isAdmin() ? el('a', { href: '#/ai', 'aria-current': active === 'ai' ? 'page' : null }, 'AI') : null),
     el('span', { class: 'spacer' }), el('a', { class: 'btn ghost sm', href: '/', target: '_blank', rel: 'noopener', 'aria-label': 'Player page' }, icon('external'), el('span', { class: 'lbl' }, 'Player page')), themeBtn, userBtn);
 }
 
@@ -130,6 +131,7 @@ function route() {
   if (h[0] === 'events') { paintTopbar('events'); return renderEvents(); }
   if (h[0] === 'event') { paintTopbar('events'); return renderEvent(h[1]); }
   if (h[0] === 'account') { paintTopbar(''); return renderAccount(); }
+  if (h[0] === 'ai') { if (!isAdmin()) return go('#/'); paintTopbar('ai'); return renderAISettings(); }
   if (h[0] === 'team') { if (!isAdmin()) return go('#/'); paintTopbar('team'); return renderTeam(); }
   paintTopbar('quizzes');
   return renderDashboard();
@@ -256,6 +258,7 @@ function renderAccount() {
     el('div', { class: 'acct-grid' },
       el('section', { class: 'card' }, el('h2', { class: 'h-sm' }, 'Profile'), nameForm),
       el('section', { class: 'card' }, el('h2', { class: 'h-sm' }, 'Password'), pwForm),
+      el('section', { class: 'card', style: { gridColumn: '1 / -1' } }, el('h2', { class: 'h-sm' }, 'AI assistant access'), tokensCard()),
       el('section', { class: 'card' }, el('h2', { class: 'h-sm' }, 'Devices'), el('p', { class: 'muted', style: { margin: '.3rem 0 .9rem' } }, 'Signed in somewhere you no longer use? End every session, including this one.'),
         el('button', { class: 'btn', type: 'button', onclick: async () => { if (await ui.confirm({ title: 'Sign out everywhere?', message: 'You will need to sign in again on every device.', confirmText: 'Sign out everywhere' })) { try { await api('/api/auth/logout-all', { method: 'POST' }); } catch (x) { /* ignore */ } me = null; runLeave(); renderLogin(); } } }, icon('logout'), 'Sign out of all devices'))));
 }

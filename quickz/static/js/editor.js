@@ -126,11 +126,16 @@ async function renderEditor(id) {
       desc, ...items,
       el('div', { class: 'add-row' },
         el('button', { class: 'btn primary', type: 'button', onclick: addDialog }, icon('plus'), 'Add question'),
-        el('button', { class: 'btn', type: 'button', onclick: pasteDialog }, icon('upload'), 'Paste questions')));
+        el('button', { class: 'btn', type: 'button', onclick: pasteDialog }, icon('upload'), 'Paste questions'),
+        el('button', { class: 'btn ai-btn', type: 'button', onclick: () => aiDialog({ onAdd: addAIQuestions }) }, icon('sparkle'), 'Draft with AI')));
   }
   function addQuestion(kind) {
     const q = newQuestion(kind); quiz.questions.push(q); sel = q.id; touch(); drawAll();
     setTimeout(() => { $('#q-text')?.focus(); $('.rail .ritem.sel')?.scrollIntoView({ block: 'nearest' }); }, 30);
+  }
+  function addAIQuestions(list) {
+    list.forEach(hydrateQuestion);
+    quiz.questions.push(...list); sel = list[0].id; touch(); drawAll();
   }
   function addDialog() {
     const m = ui.modal({ title: 'Add a question', wide: true, body: typePicker(k => { m.close(); addQuestion(k); }) });

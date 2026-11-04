@@ -98,6 +98,71 @@ CREATE TABLE IF NOT EXISTS registrations(
   created_at REAL NOT NULL,
   UNIQUE(event_id, email)
 );
+CREATE TABLE IF NOT EXISTS ai_providers(
+  name TEXT PRIMARY KEY,
+  enabled INTEGER NOT NULL DEFAULT 0,
+  key_enc TEXT NOT NULL DEFAULT '',
+  key_hint TEXT NOT NULL DEFAULT '',
+  model TEXT NOT NULL DEFAULT '',
+  base_url TEXT NOT NULL DEFAULT '',
+  account_id TEXT NOT NULL DEFAULT '',
+  priority INTEGER NOT NULL DEFAULT 50,
+  updated_at REAL NOT NULL DEFAULT 0,
+  updated_by TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS ai_settings(
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS ai_audit(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts REAL NOT NULL,
+  user_id INTEGER,
+  username TEXT NOT NULL DEFAULT '',
+  action TEXT NOT NULL,
+  status TEXT NOT NULL,
+  provider TEXT NOT NULL DEFAULT '',
+  model TEXT NOT NULL DEFAULT '',
+  params TEXT NOT NULL DEFAULT '{}',
+  message TEXT NOT NULL DEFAULT '',
+  requested INTEGER NOT NULL DEFAULT 0,
+  returned INTEGER NOT NULL DEFAULT 0,
+  accepted INTEGER NOT NULL DEFAULT 0,
+  tokens_in INTEGER NOT NULL DEFAULT 0,
+  tokens_out INTEGER NOT NULL DEFAULT 0,
+  latency_ms INTEGER NOT NULL DEFAULT 0,
+  ip TEXT NOT NULL DEFAULT '',
+  flags TEXT NOT NULL DEFAULT '{}',
+  response TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS api_tokens(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE,
+  hint TEXT NOT NULL DEFAULT '',
+  scope TEXT NOT NULL DEFAULT 'read',
+  created_at REAL NOT NULL,
+  expires_at REAL NOT NULL,
+  last_used REAL,
+  uses INTEGER NOT NULL DEFAULT 0,
+  revoked_at REAL
+);
+CREATE TABLE IF NOT EXISTS mcp_audit(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts REAL NOT NULL,
+  token_id INTEGER,
+  user_id INTEGER,
+  username TEXT NOT NULL DEFAULT '',
+  tool TEXT NOT NULL,
+  status TEXT NOT NULL,
+  message TEXT NOT NULL DEFAULT '',
+  ms INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_audit_ts ON mcp_audit(ts);
+CREATE INDEX IF NOT EXISTS idx_api_tokens_user ON api_tokens(user_id);
+CREATE INDEX IF NOT EXISTS idx_ai_audit_ts ON ai_audit(ts);
+CREATE INDEX IF NOT EXISTS idx_ai_audit_user ON ai_audit(user_id, ts);
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_players_game ON players(game_id);
 CREATE INDEX IF NOT EXISTS idx_answers_game ON answers(game_id);
@@ -426,3 +491,144 @@ class Database:
         for r in rows:
             r["choice"] = json.loads(r["choice"])
         return rows
+
+    # ---- AI drafting: services, settings, audit ---------------------------------
+    def ai_settings(self) -> dict:
+        from .ai import DEFAULT_SETTINGS
+        out = dict(DEFAULT_SETTINGS)
+        for r in self._all("SELECT key,value FROM ai_settings"):
+            if r["key"] in out:
+                try:
+                    out[r["key"]] = json.loads(r["value"])
+                except ValueError:
+                    pass
+        return out
+
+    def ai_set_settings(self, values: dict):
+        for k, v in values.items():
+            self._run("INSERT INTO ai_settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (k, json.dumps(v)))
+
+    def ai_providers(self, with_keys: bool = False) -> dict:
+        """name -> config. The encrypted key is only included for the server's own use, never for the browser."""
+        from .ai import PROVIDERS
+        rows = {r["name"]: r for r in self._all("SELECT * FROM ai_providers")}
+        out = {}
+        for name in PROVIDERS:
+            r = rows.get(name, {})
+            cfg = {"enabled": bool(r.get("enabled")), "has_key": bool(r.get("key_enc")), "key_hint": r.get("key_hint", ""),
+                   "model": r.get("model", ""), "base_url": r.get("base_url", ""), "account_id": r.get("account_id", ""),
+                   "priority": r.get("priority", 50), "updated_at": r.get("updated_at", 0), "updated_by": r.get("updated_by", "")}
+            if with_keys:
+                cfg["key_enc"] = r.get("key_enc", "")
+            out[name] = cfg
+        return out
+
+    def ai_save_provider(self, name: str, fields: dict, updated_by: str):
+        self._run("INSERT OR IGNORE INTO ai_providers(name) VALUES(?)", (name,))
+        sets = ", ".join(f"{k}=?" for k in fields) + ", updated_at=?, updated_by=?"
+        self._run(f"UPDATE ai_providers SET {sets} WHERE name=?", (*fields.values(), time.time(), updated_by, name))
+
+    def ai_audit_add(self, row: dict) -> int:
+        cur = self._run(
+            """INSERT INTO ai_audit(ts,user_id,username,action,status,provider,model,params,message,requested,returned,
+                                    tokens_in,tokens_out,latency_ms,ip,flags,response) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (time.time(), row.get("user_id"), row.get("username", ""), row["action"], row["status"], row.get("provider", ""),
+             row.get("model", ""), json.dumps(row.get("params") or {}), str(row.get("message", ""))[:1000], row.get("requested", 0),
+             row.get("returned", 0), row.get("tokens_in", 0), row.get("tokens_out", 0), row.get("latency_ms", 0), row.get("ip", ""),
+             json.dumps(row.get("flags") or {}), row.get("response", "")))
+        return cur.lastrowid
+
+    def ai_audit_count(self, user_id, since: float, statuses: tuple, action: str = "generate") -> int:
+        marks = ",".join("?" * len(statuses))
+        where, args = f"action=? AND ts>=? AND status IN ({marks})", [action, since, *statuses]
+        if user_id is not None:
+            where += " AND user_id=?"
+            args.append(user_id)
+        return self._one(f"SELECT COUNT(*) n FROM ai_audit WHERE {where}", tuple(args))["n"]
+
+    def ai_audit_accept(self, audit_id: int, user_id: int, count: int) -> bool:
+        cur = self._run("UPDATE ai_audit SET accepted=MIN(returned, accepted+?) WHERE id=? AND user_id=? AND action='generate'",
+                        (max(0, count), audit_id, user_id))
+        return cur.rowcount > 0
+
+    def ai_audit_list(self, status="", user="", action="", limit=100, offset=0, since=0.0, detail=False) -> dict:
+        where, args = ["ts>=?"], [since]
+        for col, val in (("status", status), ("username", user), ("action", action)):
+            if val:
+                where.append(f"{col}=?")
+                args.append(val)
+        w = " AND ".join(where)
+        total = self._one(f"SELECT COUNT(*) n FROM ai_audit WHERE {w}", tuple(args))["n"]
+        cols = "*" if detail else "id,ts,username,action,status,provider,model,params,message,requested,returned,accepted,tokens_in,tokens_out,latency_ms,ip,flags"
+        rows = self._all(f"SELECT {cols} FROM ai_audit WHERE {w} ORDER BY id DESC LIMIT ? OFFSET ?", (*args, limit, offset))
+        for r in rows:
+            r["params"], r["flags"] = json.loads(r["params"]), json.loads(r["flags"])
+        return {"total": total, "rows": rows}
+
+    def ai_audit_one(self, audit_id: int):
+        r = self._one("SELECT * FROM ai_audit WHERE id=?", (audit_id,))
+        if r:
+            r["params"], r["flags"] = json.loads(r["params"]), json.loads(r["flags"])
+        return r
+
+    def ai_stats(self, since: float) -> dict:
+        by_status = {r["status"]: r["n"] for r in self._all("SELECT status, COUNT(*) n FROM ai_audit WHERE action='generate' AND ts>=? GROUP BY status", (since,))}
+        by_provider = self._all("""SELECT provider, COUNT(*) calls, SUM(status IN ('ok','partial')) good, SUM(tokens_in) tin, SUM(tokens_out) tout,
+                                         CAST(AVG(latency_ms) AS INTEGER) avg_ms FROM ai_audit
+                                  WHERE action='generate' AND provider!='' AND ts>=? GROUP BY provider""", (since,))
+        by_user = self._all("""SELECT username, COUNT(*) requests, SUM(returned) returned, SUM(accepted) accepted FROM ai_audit
+                               WHERE action='generate' AND ts>=? GROUP BY username ORDER BY requests DESC LIMIT 10""", (since,))
+        tot = self._one("SELECT COALESCE(SUM(returned),0) returned, COALESCE(SUM(accepted),0) accepted FROM ai_audit WHERE action='generate' AND ts>=?", (since,))
+        return {"by_status": by_status, "by_provider": by_provider, "by_user": by_user, **tot}
+
+    def ai_audit_purge(self, before: float) -> int:
+        return self._run("DELETE FROM ai_audit WHERE ts<?", (before,)).rowcount
+
+    # ---- personal access tokens (for the MCP server) and their audit log ---------
+    def create_api_token(self, user_id: int, name: str, token_hash: str, hint: str, scope: str, expires_at: float) -> int:
+        return self._run("INSERT INTO api_tokens(user_id,name,token_hash,hint,scope,created_at,expires_at) VALUES(?,?,?,?,?,?,?)",
+                         (user_id, name, token_hash, hint, scope, time.time(), expires_at)).lastrowid
+
+    def find_api_token(self, token_hash: str):
+        """The token plus its owner, only if it is live (not revoked, not expired, owner enabled). `id` is the owner's id."""
+        return self._one(
+            """SELECT t.id AS token_id, t.scope, u.id, u.username, u.display_name, u.role, u.must_change
+               FROM api_tokens t JOIN users u ON u.id=t.user_id
+               WHERE t.token_hash=? AND t.revoked_at IS NULL AND t.expires_at>? AND u.disabled=0""", (token_hash, time.time()))
+
+    def touch_api_token(self, token_id: int, now: float):
+        self._run("UPDATE api_tokens SET last_used=?, uses=uses+1 WHERE id=?", (now, token_id))
+
+    def list_api_tokens(self, user_id: int):
+        return self._all("""SELECT id,name,hint,scope,created_at,expires_at,last_used,uses,revoked_at FROM api_tokens
+                            WHERE user_id=? ORDER BY id DESC LIMIT 50""", (user_id,))
+
+    def active_token_count(self, user_id: int) -> int:
+        return self._one("SELECT COUNT(*) n FROM api_tokens WHERE user_id=? AND revoked_at IS NULL AND expires_at>?", (user_id, time.time()))["n"]
+
+    def revoke_api_token(self, token_id: int, user_id: int) -> bool:
+        return self._run("UPDATE api_tokens SET revoked_at=? WHERE id=? AND user_id=? AND revoked_at IS NULL", (time.time(), token_id, user_id)).rowcount > 0
+
+    def revoke_user_tokens(self, user_id: int):
+        self._run("UPDATE api_tokens SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL", (time.time(), user_id))
+
+    def mcp_audit_add(self, row: dict):
+        self._run("INSERT INTO mcp_audit(ts,token_id,user_id,username,tool,status,message,ms) VALUES(?,?,?,?,?,?,?,?)",
+                  (time.time(), row.get("token_id"), row.get("user_id"), row.get("username", ""), row["tool"], row["status"], str(row.get("message", ""))[:400], row.get("ms", 0)))
+
+    def mcp_count(self, token_id: int, since: float, tools: tuple, status: str) -> int:
+        marks = ",".join("?" * len(tools))
+        return self._one(f"SELECT COUNT(*) n FROM mcp_audit WHERE token_id=? AND ts>=? AND status=? AND tool IN ({marks})", (token_id, since, status, *tools))["n"]
+
+    def mcp_audit_list(self, limit=50, offset=0, user="", status="", since=0.0) -> dict:
+        where, args = ["ts>=?"], [since]
+        for col, val in (("username", user), ("status", status)):
+            if val:
+                where.append(f"{col}=?")
+                args.append(val)
+        w = " AND ".join(where)
+        total = self._one(f"SELECT COUNT(*) n FROM mcp_audit WHERE {w}", tuple(args))["n"]
+        return {"total": total, "rows": self._all(f"SELECT * FROM mcp_audit WHERE {w} ORDER BY id DESC LIMIT ? OFFSET ?", (*args, limit, offset))}
+
+    def mcp_audit_purge(self, before: float) -> int:
+        return self._run("DELETE FROM mcp_audit WHERE ts<?", (before,)).rowcount
