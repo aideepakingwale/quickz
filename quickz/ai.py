@@ -56,7 +56,7 @@ UNDER_AGE = ("5-7", "8-10", "11-13")          # these audiences also get the str
 
 # ---- providers -------------------------------------------------------------------------------------------------------
 PROVIDERS = {
-    "gemini": {"label": "Google Gemini (AI Studio)", "kind": "gemini", "model": "gemini-2.5-flash-lite",
+    "gemini": {"label": "Google Gemini (AI Studio)", "kind": "gemini", "model": "gemini-2.5-flash",
                "base": "https://generativelanguage.googleapis.com/v1beta", "key_url": "https://aistudio.google.com/apikey"},
     "groq": {"label": "Groq", "kind": "openai", "model": "llama-3.3-70b-versatile", "json_mode": True,
              "base": "https://api.groq.com/openai/v1", "key_url": "https://console.groq.com/keys"},
@@ -292,7 +292,7 @@ def http_post(url: str, headers: dict, body: dict, timeout: float) -> tuple[int,
         def redirect_request(self, *a, **k):
             return None
     opener = urllib.request.build_opener(_NoRedirect)
-    req = urllib.request.Request(url, data=json.dumps(body).encode(), headers={"Content-Type": "application/json", **headers}, method="POST")
+    req = urllib.request.Request(url, data=json.dumps(body).encode(), headers={"Content-Type": "application/json", "Accept": "application/json", "User-Agent": "DiQuizBuzz/1.0 (+https://github.com/aideepakingwale/quickz)", **headers}, method="POST")
     try:
         with opener.open(req, timeout=timeout) as resp:
             raw = resp.read(1_000_000)
@@ -331,7 +331,7 @@ def call_provider(name: str, cfg: dict, api_key: str, system: str, user: str, ti
     if code == 429:
         raise AIError("The AI service is rate-limited right now (free quota used up).", "rate_limited")
     if code in (401, 403):
-        raise AIError("The AI service refused the key. Ask the Super Admin to check it.", "error")
+        raise AIError(f"The AI service refused the key (HTTP {code}). Ask the Super Admin to check the key and that it is for this service.", "error")
     if code >= 400:
         detail = ""
         err = data.get("error") if isinstance(data, dict) else None
