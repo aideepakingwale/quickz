@@ -339,10 +339,11 @@ async function renderTeam() {
 
 /* ---------------------------------------------------------------- covers */
 const COVER_COLORS = ['#1F4FD8', '#0C8C7B', '#B7791F', '#CC3045', '#6A4CC4', '#C2570F'];
-function cover(title, extra) {
+function cover(title, extra, image) {
   let h = 0; for (const ch of title) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
   const fg = COVER_COLORS[h % COVER_COLORS.length];
   const mono = title.replace(/[^\p{L}\p{N} ]/gu, '').split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join('') || 'Q';
+  if (image) return el('div', { class: 'cover has-img', role: 'img', 'aria-label': `Cover picture for ${title}`, style: { backgroundImage: `url("${String(image).replace(/"/g, '%22')}")` } }, extra);
   return el('div', { class: 'cover', style: { background: `color-mix(in srgb, ${fg} 13%, var(--surface))`, color: `color-mix(in srgb, ${fg} 85%, var(--text))` } },
     el('span', { class: 'mono' }, mono), extra);
 }
@@ -366,7 +367,7 @@ async function renderDashboard() {
   const drawGrid = () => {
     const list = quizzes.filter(z => z.title.toLowerCase().includes(filter));
     grid.replaceChildren(...list.map(z => el('article', { class: 'qcard' },
-      cover(z.title, el('div', { class: 'chips' }, z.has_buzzer ? el('span', { class: 'chip' }, icon('bell'), 'Buzzer') : null)),
+      cover(z.title, el('div', { class: 'chips' }, z.has_buzzer ? el('span', { class: 'chip' }, icon('bell'), 'Buzzer') : null), z.cover),
       el('div', { class: 'body' }, el('h3', {}, z.title),
         el('div', { class: 'meta' }, `${z.question_count} question${z.question_count === 1 ? '' : 's'} · ~${fmtDuration(z.duration)} · ${z.plays ? `played ${z.plays}×, ${timeAgo(z.last_played)}` : 'not played yet'}`),
         isAdmin() && !z.mine ? el('div', { style: { marginTop: '.45rem' } }, el('span', { class: 'chip' }, icon('users'), z.owner_name || 'Unassigned')) : null),

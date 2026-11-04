@@ -46,7 +46,9 @@ CSRF_HEADER = "x-quickz"
 MAX_WS_BYTES = 4096
 MAX_MSGS_PER_SEC = 25
 MAX_SCREENS = 20
-MAX_IMAGE = 5 * 1024 * 1024
+MAX_IMAGE = 2 * 1024 * 1024                       # pictures: the browser shrinks big photos first, so 2 MB is plenty
+MAX_MUSIC = 5 * 1024 * 1024                       # lobby music
+MUSIC_EXT = (".mp3", ".m4a", ".ogg", ".wav")        # the few music formats we accept
 IMAGE_MAGIC = [
     (b"\x89PNG\r\n\x1a\n", ".png"),
     (b"\xff\xd8\xff", ".jpg"),
@@ -441,16 +443,22 @@ def create_app(settings: Settings, guard: auth.LoginGuard | None = None, cloud: 
     @app.get("/api/quizzes/{quiz_id}/export")
     async def export_quiz(quiz_id: int, user: dict = Depends(user_dep)):
         quiz = quiz_for(user, quiz_id)
-        payload = {"title": quiz["title"], "description": quiz["description"], "questions": quiz["questions"]}
+        payload = {"title": quiz["title"], "description": quiz["description"], "cover": quiz.get("cover", ""), "screen_bg": quiz.get("screen_bg", ""), "lobby_music": quiz.get("lobby_music", ""), "questions": quiz["questions"]}
         return Response(json.dumps(payload, indent=2), media_type="application/json", headers={
             "Content-Disposition": f'attachment; filename="quiz-{quiz_id}.json"'})
 
     @app.post("/api/uploads")
     async def upload(request: Request, user: dict = Depends(user_dep)):
-        """Images (5 MB) and audio/video (QUICKZ_MAX_MEDIA_MB). Streamed to disk, type decided by sniffing the bytes."""
+        """Images (2 MB), lobby music (?purpose=music: MP3, M4A, OGG or WAV, 5 MB) and other audio/video (QUICKZ_MAX_MEDIA_MB).
+        Streamed to disk, type decided by sniffing the bytes."""
         media_cap = settings.max_media_mb * 1024 * 1024
-        if int(request.headers.get("content-length") or 0) > max(media_cap, MAX_IMAGE):
-            raise HTTPException(413, f"File too large (max {settings.max_media_mb} MB)")
+        music = request.query_params.get("purpose") == "music"
+        if int(request.headers.get("content-length") or 0) > (MAX_MUSIC if music else max(media_cap, MAX_IMAGE)):
+            raise HTTPException(413, "Music is too large (max 5 MB)" if music else f"File too large (max {settings.max_media_mb} MB)")
+
+        def check_music(kind, ext):
+            if music and (kind != "audio" or ext not in MUSIC_EXT):
+                raise HTTPException(400, "Music must be an MP3, M4A, OGG or WAV file.")
         name = secrets.token_hex(8)
         tmp = settings.uploads_dir / (name + ".part")
         kind = ext = None
@@ -466,17 +474,19 @@ def create_app(settings: Settings, guard: auth.LoginGuard | None = None, cloud: 
                             if not sniffed:
                                 raise HTTPException(400, "Unsupported file. Use PNG/JPEG/GIF/WebP images, MP3/M4A/WAV/OGG/FLAC audio, or MP4/WebM video.")
                             kind, ext = sniffed
+                            check_music(kind, ext)
                             fh.write(head)
                             head = b""
                     else:
                         fh.write(chunk)
-                    if size > (MAX_IMAGE if kind == "image" else media_cap):
-                        raise HTTPException(413, "Image too large (max 5 MB)" if kind == "image" else f"File too large (max {settings.max_media_mb} MB)")
+                    if size > (MAX_IMAGE if kind == "image" else MAX_MUSIC if music else media_cap):
+                        raise HTTPException(413, "Image too large (max 2 MB)" if kind == "image" else "Music is too large (max 5 MB)" if music else f"File too large (max {settings.max_media_mb} MB)")
                 if kind is None:  # tiny body
                     sniffed = sniff_upload(head)
                     if not sniffed:
                         raise HTTPException(400, "Unsupported file.")
                     kind, ext = sniffed
+                    check_music(kind, ext)
                     fh.write(head)
             final = settings.uploads_dir / (name + ext)
             for attempt in range(6):          # Windows: antivirus or an indexer can hold a just-written file for a moment

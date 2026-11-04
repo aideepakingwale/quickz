@@ -276,3 +276,151 @@ def test_an_old_database_gets_the_picture_model_column(tmp_path):
     con.close()
     db = Database(path)
     assert "image_model" in {r[1] for r in db._conn.execute("PRAGMA table_info(ai_providers)")}
+
+
+# ---- phase 2: option pictures, explanation pictures and the quiz cover --------------------------------------------------
+
+def test_the_prompt_layout_follows_where_the_picture_goes(host, fake):
+    host.post("/api/ai/image", json={**REQ, "purpose": "option", "description": "A ginger cat"})
+    host.post("/api/ai/image", json={**REQ, "purpose": "cover", "question_type": "cover", "description": "Stars over a classroom"})
+    host.post("/api/ai/image", json={**REQ, "purpose": "explanation"})
+    host.post("/api/ai/image", json=REQ)
+    option, cover, explanation, question = [c["prompt"] for c in fake.calls]
+    assert "square 1:1" in option and "one card in a matching set" in option
+    assert "16:9" in cover and "quiz cover" in cover
+    assert "landscape 4:3" in explanation and "landscape 4:3" in question
+    assert all("No text, no letters" in p for p in (option, cover, explanation, question))
+
+
+def test_option_pictures_only_for_question_types_that_have_a_list_of_options(host, fake):
+    for kind in aimage.OPTION_KINDS:
+        assert host.post("/api/ai/image", json={**REQ, "purpose": "option", "question_type": kind}).status_code == 200, kind
+    for kind in ("tf", "text", "number", "slide", "buzzer", "pin", "jigsaw"):
+        r = host.post("/api/ai/image", json={**REQ, "purpose": "option", "question_type": kind})
+        assert r.status_code == 400, kind
+    assert len(fake.calls) == len(aimage.OPTION_KINDS)
+
+
+def test_a_cover_needs_no_question_type_but_other_purposes_do(host, fake):
+    body = {"description": "Stars over a classroom", "purpose": "cover"}
+    assert host.post("/api/ai/image", json=body).status_code == 200
+    assert host.post("/api/ai/image", json={**body, "purpose": "banner"}).status_code == 400
+    assert host.post("/api/ai/image", json={**body, "purpose": "explanation"}).status_code == 400
+
+
+def test_the_purpose_is_in_the_audit_and_the_idea_knows_it_is_for_a_cover(admin, host, fake):
+    host.post("/api/ai/image", json={"description": "Stars over a classroom", "purpose": "cover"})
+    host.post("/api/ai/image/idea", json={"question": "Space week. Planets and stars for year 4.", "purpose": "cover"})
+    img, idea = audit(admin, action="image")[0], audit(admin, action="image_idea")[0]
+    assert admin.get(f"/api/admin/ai/audit/{img['id']}").json()["params"]["purpose"] == "cover"
+    assert "Picture for: the quiz cover" in fake.text_calls[0]["user"]
+    assert admin.get(f"/api/admin/ai/audit/{idea['id']}").json()["request"]["prompt_version"] == "idea-2"
+
+
+def test_a_quiz_keeps_its_cover_through_save_copy_and_export(host):
+    cover = "/uploads/0123456789abcdef.png"
+    qid = host.post("/api/quizzes", json={"title": "Space week", "description": "", "cover": cover, "questions": []}).json()["id"]
+    assert host.get(f"/api/quizzes/{qid}").json()["cover"] == cover
+    assert next(q for q in host.get("/api/quizzes").json() if q["id"] == qid)["cover"] == cover
+    copy = host.post(f"/api/quizzes/{qid}/duplicate").json()["id"]
+    assert host.get(f"/api/quizzes/{copy}").json()["cover"] == cover
+    assert json.loads(host.get(f"/api/quizzes/{qid}/export").text)["cover"] == cover
+    assert host.put(f"/api/quizzes/{qid}", json={"title": "Space week", "description": "", "cover": "", "questions": []}).status_code == 200
+    assert host.get(f"/api/quizzes/{qid}").json()["cover"] == ""
+
+
+def test_a_cover_must_be_an_upload_or_an_allowed_link(host):
+    for bad in ("https://evil.example/cover.png", "/uploads/../secret.png", "javascript:alert(1)"):
+        assert host.post("/api/quizzes", json={"title": "Space week", "cover": bad, "questions": []}).status_code == 400, bad
+    assert host.post("/api/quizzes", json={"title": "No cover", "questions": []}).status_code == 200
+
+
+def test_an_old_quiz_table_gets_the_cover_column(tmp_path):
+    import sqlite3
+    from quickz.db import Database
+    path = tmp_path / "old.db"
+    con = sqlite3.connect(path)
+    con.execute("CREATE TABLE quizzes(id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', questions TEXT NOT NULL DEFAULT '[]', created_at REAL NOT NULL, updated_at REAL NOT NULL)")
+    con.execute("INSERT INTO quizzes(title,created_at,updated_at) VALUES('Old',1,1)")
+    con.commit()
+    con.close()
+    db = Database(path)
+    row = db.get_quiz(1)
+    assert row["cover"] == "" and row["screen_bg"] == "" and row["lobby_music"] == ""
+
+
+# ---- projector background and lobby music --------------------------------------------------------------------------------
+
+QUESTION = {"id": "q1", "type": "mcq", "text": "2+2?", "options": [{"id": "a", "text": "4"}, {"id": "b", "text": "5"}], "correct": ["a"], "time_limit": 20, "points": 1000}
+
+
+def test_a_quiz_keeps_its_projector_background_and_the_game_screen_gets_it(app, host):
+    from quickz.engine import GameManager
+    bg = "/uploads/fedcba9876543210.webp"
+    qid = host.post("/api/quizzes", json={"title": "Space week", "description": "", "screen_bg": bg, "questions": [QUESTION]}).json()["id"]
+    assert host.get(f"/api/quizzes/{qid}").json()["screen_bg"] == bg
+    copy = host.post(f"/api/quizzes/{qid}/duplicate").json()["id"]
+    assert host.get(f"/api/quizzes/{copy}").json()["screen_bg"] == bg
+    assert json.loads(host.get(f"/api/quizzes/{qid}/export").text)["screen_bg"] == bg
+    game = GameManager(app.state.db).create(qid, {})
+    assert game.view_screen(game._ranks())["bg"] == bg
+    plain = host.post("/api/quizzes", json={"title": "Plain", "questions": [QUESTION]}).json()["id"]
+    other = GameManager(app.state.db).create(plain, {})
+    assert other.view_screen(other._ranks())["bg"] == ""
+
+
+def test_the_background_must_be_an_upload_or_an_allowed_link(host):
+    for bad in ("https://evil.example/bg.png", "/uploads/../x.png", "data:image/png;base64,AAAA"):
+        assert host.post("/api/quizzes", json={"title": "T", "screen_bg": bad, "questions": []}).status_code == 400, bad
+
+
+def test_a_background_can_be_drawn_by_ai_without_a_question_type(host, fake):
+    r = host.post("/api/ai/image", json={"description": "Soft blue waves", "purpose": "background"})
+    assert r.status_code == 200 and "16:9 background scene" in fake.calls[0]["prompt"] and "text placed on top" in fake.calls[0]["prompt"]
+
+
+def test_a_quiz_keeps_its_lobby_music_and_the_big_screen_gets_it(app, host):
+    from quickz.engine import GameManager
+    song = "/uploads/0011223344556677.mp3"
+    qid = host.post("/api/quizzes", json={"title": "Party", "lobby_music": song, "questions": [QUESTION]}).json()["id"]
+    assert host.get(f"/api/quizzes/{qid}").json()["lobby_music"] == song
+    copy = host.post(f"/api/quizzes/{qid}/duplicate").json()["id"]
+    assert host.get(f"/api/quizzes/{copy}").json()["lobby_music"] == song
+    assert json.loads(host.get(f"/api/quizzes/{qid}/export").text)["lobby_music"] == song
+    game = GameManager(app.state.db).create(qid, {})
+    assert game.view_screen(game._ranks())["music"] == song
+    assert host.put(f"/api/quizzes/{qid}", json={"title": "Party", "lobby_music": "", "questions": [QUESTION]}).status_code == 200
+    assert host.get(f"/api/quizzes/{qid}").json()["lobby_music"] == ""
+
+
+def test_lobby_music_must_be_an_uploaded_file_in_one_of_the_few_allowed_formats(host):
+    for bad in ("https://evil.example/song.mp3", "/uploads/0011223344556677.png", "/uploads/../x.mp3", "/uploads/0011223344556677.mp4",
+                "/uploads/0011223344556677.flac", "/uploads/0011223344556677.aac", "javascript:alert(1)"):
+        assert host.post("/api/quizzes", json={"title": "Party", "lobby_music": bad, "questions": []}).status_code == 400, bad
+    for ext in ("mp3", "m4a", "wav", "ogg"):
+        assert host.post("/api/quizzes", json={"title": "Party", "lobby_music": f"/uploads/0011223344556677.{ext}", "questions": []}).status_code == 200, ext
+
+
+# ---- upload limits: pictures 2 MB, lobby music 5 MB and only a few formats ----------------------------------------------
+
+def wav_bytes(n):
+    return b"RIFF" + (36 + n).to_bytes(4, "little") + b"WAVEfmt " + (16).to_bytes(4, "little") + bytes([1, 0, 1, 0, 64, 31, 0, 0, 128, 62, 0, 0, 2, 0, 16, 0]) + b"data" + n.to_bytes(4, "little") + b"\x00" * n
+
+
+def test_pictures_are_capped_at_two_megabytes(host):
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
+    assert host.post("/api/uploads", content=png + b"\x00" * (1900 * 1024)).status_code == 200
+    r = host.post("/api/uploads", content=png + b"\x00" * (2100 * 1024))
+    assert r.status_code == 413 and "max 2 MB" in r.text
+
+
+def test_music_is_capped_at_five_megabytes_and_limited_to_a_few_formats(host):
+    ok = host.post("/api/uploads?purpose=music", content=wav_bytes(3_000_000))
+    assert ok.status_code == 200 and ok.json()["kind"] == "audio" and ok.json()["url"].endswith(".wav")
+    big = host.post("/api/uploads?purpose=music", content=wav_bytes(5_300_000))
+    assert big.status_code == 413 and "max 5 MB" in big.text
+    flac = b"fLaC" + b"\x00" * 200
+    assert host.post("/api/uploads?purpose=music", content=flac).status_code == 400            # a real audio format, but not one of the few allowed
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
+    assert host.post("/api/uploads?purpose=music", content=png).status_code == 400
+    assert host.post("/api/uploads", content=flac).status_code == 200                           # other audio (question clips) is unchanged

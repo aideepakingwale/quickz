@@ -27,6 +27,7 @@ VIMEO_ID = re.compile(r"^\d{5,12}$")
 MEDIA_KINDS = ("audio", "video", "embed")
 MEDIA_WHERE = ("screen", "players", "both")
 AUDIO_EXT = {".mp3", ".m4a", ".wav", ".ogg", ".flac", ".aac"}
+MUSIC_EXT = {".mp3", ".m4a", ".ogg", ".wav"}                 # lobby music: only these
 VIDEO_EXT = {".mp4", ".webm"}
 
 INLINE_TAGS = {"b", "strong", "i", "em", "u", "s", "strike", "sub", "sup", "code", "span"}
@@ -216,6 +217,18 @@ def _upload_url(url, what: str) -> str:
     sample = url.startswith(SAMPLE_PREFIX) and url.rsplit(".", 1)[-1].lower() in ("svg", "png", "jpg", "jpeg", "webp")
     if not (clean and (url.startswith("/uploads/") or sample)):
         raise ValidationError(f"{what} must be uploaded through the host console")
+    return url
+
+
+def _music_url(url) -> str:
+    """Lobby music has to be an audio file uploaded through the host console (never a link to somewhere else)."""
+    url = _clean(url, 200)
+    if not url:
+        return ""
+    if not url.startswith("/uploads/") or ".." in url or "\\" in url or "?" in url or "#" in url:
+        raise ValidationError("Music must be uploaded through the host console")
+    if "." + url.rsplit(".", 1)[-1].lower() not in MUSIC_EXT:
+        raise ValidationError("Music must be an MP3, M4A, OGG or WAV file")
     return url
 
 
@@ -508,6 +521,9 @@ def validate_quiz(raw: dict) -> dict:
     return {
         "title": title,
         "description": _clean(raw.get("description"), 1000),
+        "cover": _upload_url(raw.get("cover"), "Images"),
+        "screen_bg": _upload_url(raw.get("screen_bg"), "Images"),
+        "lobby_music": _music_url(raw.get("lobby_music")),
         "questions": cleaned,
     }
 

@@ -17,6 +17,15 @@ body.screen.idle { cursor: none; }
 .lobby .left { display: flex; flex-direction: column; gap: 1.4rem; align-items: flex-start; }
 .lobby h1 { font-size: 5rem; letter-spacing: -.025em; font-weight: 800; background: linear-gradient(120deg, var(--text) 30%, var(--brand)); -webkit-background-clip: text; background-clip: text; color: transparent; }
 .lobby .desc { font-size: 1.7rem; color: var(--text-muted); max-width: 52rem; }
+.lobby h1 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; padding-bottom: .1em; }
+.lobby .left { min-height: 0; }
+.lobby.has-desc h1 { font-size: 4rem; -webkit-line-clamp: 1; }          /* the title is also in the top bar; the room goes to the description */
+/* the description gets the height left over beside the QR code; longer text scrolls by itself (slowly, with a pause at each end) */
+.desc-box { overflow: hidden; max-width: 52rem; min-height: 0; flex: none; }
+.desc-box.scrolling { -webkit-mask-image: linear-gradient(transparent, #000 8%, #000 92%, transparent); mask-image: linear-gradient(transparent, #000 8%, #000 92%, transparent); }
+.desc-box.scrolling .desc { animation: desc-scroll var(--dur, 14s) ease-in-out infinite alternate; will-change: transform; }
+@keyframes desc-scroll { 0%, 14% { transform: translateY(0); } 86%, 100% { transform: translateY(calc(var(--shift, 0px) * -1)); } }
+@media (prefers-reduced-motion: reduce) { .desc-box.scrolling .desc { animation: none; } }
 .lobby .how { font-size: 1.7rem; color: var(--text-muted); }
 .lobby .how b { color: var(--text); font-family: var(--font-display); font-weight: 650; background: var(--surface); border: 1px solid var(--border); padding: .1em .55em; border-radius: .5rem; box-shadow: var(--shadow-sm); }
 .code { display: flex; gap: 1rem; }
@@ -201,3 +210,8 @@ body.suspense .qv.screen .opt { animation: susp-glow 1.1s ease-in-out infinite; 
 .jig-side h3 { display: flex; align-items: center; gap: .5rem; font-size: 1.5rem; margin-bottom: .7rem; }
 .jig-side .muted { font-size: 1.3rem; }
 .jig-main .jig-board { width: min(calc(100% - 4rem), calc(42dvh * var(--ar, 1.5))); margin: 1.2rem auto; }
+
+/* ---- the quiz's own background picture ---- */
+.screen-bg { position: fixed; inset: 0; z-index: 0; background-size: cover; background-position: center; background-repeat: no-repeat; animation: fade-up .6s var(--ease) both; }
+.screen-bg::after { content: ''; position: absolute; inset: 0; background: color-mix(in srgb, var(--bg) 58%, transparent); }
+body.screen.has-bg .drift { display: none; }

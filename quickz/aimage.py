@@ -27,6 +27,17 @@ MAX_IMAGE_BYTES = 8 * 1024 * 1024          # what we accept from a service; the 
 # and has to be an exact real image.
 PICTURE_KINDS = ("mcq", "multi", "tf", "poll", "text", "number", "order", "match", "buzzer", "slide")
 
+# Where a picture goes. "option" pictures draw one answer card; they are offered only for kinds that have a list of options.
+PURPOSES = ("question", "explanation", "option", "cover", "background")
+OPTION_KINDS = ("mcq", "multi", "poll", "order", "match")
+LAYOUT = {
+    "question": "One clear main subject, simple uncluttered background, centred, landscape 4:3.",
+    "explanation": "One clear main subject, simple uncluttered background, centred, landscape 4:3.",
+    "option": "A single subject, centred on a plain light background, square 1:1, simple and instantly recognisable. It is one card in a matching set, so use the same style and colours as the others.",
+    "cover": "A wide banner composition, 16:9, with a clear central subject and calm space around it, suitable as a quiz cover.",
+    "background": "A wide 16:9 background scene made of soft shapes and gentle colours, low detail, no single central subject, with large calm areas so text placed on top stays easy to read.",
+}
+
 STYLES = {
     "flat": ("Flat illustration", "Flat vector illustration with soft colours and clean shapes"),
     "cartoon": ("Friendly cartoon", "Friendly cartoon illustration with bold outlines and bright colours"),
@@ -43,6 +54,8 @@ IMAGE_SERVICES = {
 
 IDEA_SYSTEM = """You help a quiz host choose a picture for one quiz question. Reply with ONLY this JSON object:
 {"suitable": true, "reason": "", "description": "one sentence describing a simple scene"}
+
+The "Picture for" line says where the picture goes: a question, its explanation, or the quiz cover. For a quiz cover the text is the quiz's title and description.
 
 Set "suitable" to false, with a short reason a host would understand, when the question:
 - asks players to identify or compare real things shown in a picture (flags, maps, landmarks, logos, famous people, plants or animals by sight, diagrams, charts, equations), or
@@ -69,19 +82,32 @@ def _screen(text: str, what: str, terms: list[str]) -> None:
         raise AIError(f"This {what} is not allowed for picture generation.", "blocked")
 
 
-def check_image_request(raw: dict, settings: dict) -> dict:
-    if not isinstance(raw, dict):
+def check_purpose(raw: dict) -> tuple[str, str]:
+    """(purpose, kind). A cover has no question type; everything else needs one that can use a generated picture."""
+    purpose = raw.get("purpose") or "question"
+    if purpose not in PURPOSES:
         raise AIError("Bad request.", "blocked")
+    if purpose in ("cover", "background"):
+        return purpose, purpose
     kind = raw.get("question_type")
     if kind not in PICTURE_KINDS:
         raise AIError("Pictures cannot be generated for this question type. It needs a real picture that you upload.", "blocked")
+    if purpose == "option" and kind not in OPTION_KINDS:
+        raise AIError("Pictures for the answer options are not offered for this question type.", "blocked")
+    return purpose, kind
+
+
+def check_image_request(raw: dict, settings: dict) -> dict:
+    if not isinstance(raw, dict):
+        raise AIError("Bad request.", "blocked")
+    purpose, kind = check_purpose(raw)
     age = raw.get("age_group") if raw.get("age_group") in AGE_GROUPS else "all"
     style = raw.get("style") if raw.get("style") in STYLES else "flat"
     description = clean_line(raw.get("description"), 300)
     if len(description) < 5:
         raise AIError("Describe the picture in a few words (at least 5 letters).", "blocked")
     _screen(description, "description", blocked_list(settings, age))
-    return {"description": description, "style": style, "age_group": age, "question_type": kind}
+    return {"description": description, "style": style, "age_group": age, "question_type": kind, "purpose": purpose}
 
 
 def build_image_prompt(req: dict) -> str:
@@ -89,7 +115,7 @@ def build_image_prompt(req: dict) -> str:
     return " ".join([
         req["description"].rstrip(". ") + ".",
         STYLES[req["style"]][1] + ".",
-        "One clear main subject, simple uncluttered background, centred, landscape 4:3.",
+        LAYOUT[req.get("purpose", "question")],
         "No text, no letters, no numbers, no captions, no logos or brands, no watermarks, no real or famous people, no weapons, nothing frightening.",
         f"Friendly and suitable for {AGE_GROUPS[req['age_group']]}."])
 
@@ -247,7 +273,7 @@ async def generate_image(db, vault, user: dict, raw_req: dict, ip: str = "") -> 
         if not settings["images_enabled"]:
             raise AIError("AI pictures are switched off. Ask a Super Admin to turn them on.", "blocked", 403)
         if isinstance(raw_req, dict):
-            audit["params"] = {k: clean_line(raw_req.get(k), 300 if k == "description" else 30) for k in ("description", "style", "age_group", "question_type")}
+            audit["params"] = {k: clean_line(raw_req.get(k), 300 if k == "description" else 30) for k in ("description", "style", "age_group", "question_type", "purpose")}
         req = check_image_request(raw_req, settings)
         audit["params"] = req
         _limits(db, user, settings)
@@ -256,7 +282,7 @@ async def generate_image(db, vault, user: dict, raw_req: dict, ip: str = "") -> 
         if not order:
             raise AIError("No picture service is set up yet. Ask a Super Admin to add one under AI settings.", "error", 503)
         prompt = build_image_prompt(req)
-        trace = {"template_version": TEMPLATE_VERSION, "user": prompt, "context": {"kind": req["question_type"]}, "attempts": []}
+        trace = {"template_version": TEMPLATE_VERSION, "user": prompt, "context": {"kind": req["question_type"], "purpose": req["purpose"]}, "attempts": []}
         audit["request"] = trace
         last = None
         for name in order:
@@ -298,12 +324,10 @@ async def suggest_picture(db, vault, user: dict, raw_req: dict, ip: str = "") ->
         if not settings["images_enabled"]:
             raise AIError("AI pictures are switched off. Ask a Super Admin to turn them on.", "blocked", 403)
         raw_req = raw_req if isinstance(raw_req, dict) else {}
-        kind = raw_req.get("question_type")
-        if kind not in PICTURE_KINDS:
-            raise AIError("Pictures cannot be generated for this question type. It needs a real picture that you upload.", "blocked")
+        purpose, kind = check_purpose(raw_req)
         age = raw_req.get("age_group") if raw_req.get("age_group") in AGE_GROUPS else "all"
         text = clean_line(raw_req.get("question"), 400)
-        audit["params"] = {"question": text, "question_type": kind, "age_group": age}
+        audit["params"] = {"question": text, "question_type": kind, "age_group": age, "purpose": purpose}
         if len(text) < 5:
             raise AIError("Write the question first, then ask for a picture idea.", "blocked")
         _screen(text, "question", blocked_list(settings, age))
@@ -314,8 +338,8 @@ async def suggest_picture(db, vault, user: dict, raw_req: dict, ip: str = "") ->
         order = provider_order(settings, configured)
         if not order:
             raise AIError("No AI service is set up yet for ideas. You can still describe the picture yourself.", "error", 503)
-        user_msg = f"Question type: {kind}\nAudience: {AGE_GROUPS[age]}\n<question>{text}</question>"
-        audit["request"] = {"system": IDEA_SYSTEM, "prompt_version": "idea-1", "user": user_msg, "attempts": []}
+        user_msg = f"Picture for: {'the quiz cover' if purpose == 'cover' else 'the projector background' if purpose == 'background' else 'the explanation of a question' if purpose == 'explanation' else 'a question'}\nQuestion type: {kind}\nAudience: {AGE_GROUPS[age]}\n<question>{text}</question>"
+        audit["request"] = {"system": IDEA_SYSTEM, "prompt_version": "idea-2", "user": user_msg, "attempts": []}
         last = None
         for name in order:
             cfg = configured[name]

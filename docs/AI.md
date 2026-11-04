@@ -79,9 +79,29 @@ A host can create **one illustration for one question**. In the quiz editor, und
 
 Safety: the description is checked like a topic and always wrapped in fixed rules (no text, logos, real or famous people, weapons or anything frightening, and the stricter word list for younger audiences). The picture must really be a PNG, JPEG or WebP. Only the description is sent to the service; no player information is.
 
+### Covers, explanation pictures and picture options
+
+The same **Create with AI** flow now appears in three more places:
+
+- **Quiz cover.** In the editor, under the quiz description, add a **Cover picture** (upload one or **Create a cover with AI**). It is a wide 16:9 banner drawn from the quiz title and description, saved with the quiz, copied when you duplicate it, included in the export, and shown on the quiz's card in your library.
+- **Explanation picture.** Next to the explanation field, **Create with AI** draws a picture for it (offered for the same question types as above).
+- **Picture options.** Above the answers of a single choice, multiple answers, poll or order question, **Create pictures for the options with AI** opens a set of cards, one per answer (up to six, prefilled with the option text). All are drawn in one chosen style as square, plain-background pictures so they look like a set. Edit what each should show, **Redraw** any single one, untick the ones you do not want, and press **Use**. Only ticked pictures are added. Each drawn picture counts as one request against your daily limit.
+
+For a set of picture options the per-minute limit now defaults to 6 (it was 3), so a set of four is not throttled.
+
 For the Super Admin, the AI page has an **AI pictures** card. It is off by default. Pictures use the keys already saved for **Google Gemini** (default model `gemini-2.5-flash-image`) and **Cloudflare** (default `@cf/black-forest-labs/flux-1-schnell`), or a **custom** service that follows the OpenAI images API and returns base64. Groq and OpenRouter's free text models cannot draw. Choose which service draws first, load its list of picture models, and set the limits (defaults: 20 pictures per host per day, 3 per minute, 100 for everyone per day). The text fallback setting also applies. Free tiers may use prompts and pictures to improve their products, so check each provider's terms, including who owns the pictures.
 
-Every picture request is audited as **Picture**, and every idea request as **Picture idea**. An entry shows the description, style, the exact prompt sent (with the fixed rules), each service tried with its result and time, the picture's size and SHA-256 fingerprint, and whether the host used it. The picture itself is not copied into the log.
+Every picture request is audited as **Picture** (with what it was for: question, explanation, option or cover), and every idea request as **Picture idea**. An entry shows the description, style, the exact prompt sent (with the fixed rules), each service tried with its result and time, the picture's size and SHA-256 fingerprint, and whether the host used it. The picture itself is not copied into the log.
+
+## Projector screen: background picture, music and long descriptions
+
+These are settings of the **quiz**, found in the editor under the quiz description, in **Cover, background and music**:
+
+- **Projector background.** Upload a picture (PNG, JPEG or WebP, up to 2 MB), or create one with **Create a background with AI**. The big screen scales it to cover the whole screen at any resolution and centres it, so the edges may be trimmed. Use a wide (16:9) picture with calm areas. A soft wash over it keeps the text readable.
+- **Waiting-screen music.** Upload one file: **MP3, M4A, OGG or WAV, up to 5 MB**. It loops on the big screen while players join and fades out when the quiz starts. It follows the screen's sound switch and volume, and (like all browser sound) starts after one click on the projector's sound button. Only use music you have the right to play.
+- **Long lobby descriptions** no longer push the join code and player wall off the screen. The description gets the room left beside the QR code and scrolls slowly up and down by itself when it is longer than that (it pauses at each end, and stays still for people who ask their computer to reduce motion). The title shows on one line when there is a description.
+
+Limits: pictures are 2 MB at most everywhere (large photos are shrunk in the browser first; a big animated GIF may be refused). Other audio and video you attach to questions keep the existing limit.
 
 ## Audit log
 

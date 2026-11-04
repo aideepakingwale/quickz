@@ -35,7 +35,7 @@ function initChrome() {
   sb.addEventListener('click', e => { e.stopPropagation(); if (!Sound.unlock()) { paintSound(); return; } Sound.setOn(!Sound.on); if (Sound.on) Sound.pop(); else Bed.stop(); paintSound(); atmosphere(last); });
   paintSound(); tools.classList.add('show');
   const vol = $('#vol'); vol.value = Math.round(Sound.volume * 100);
-  vol.addEventListener('input', () => { Sound.setVolume(vol.value / 100); });
+  vol.addEventListener('input', () => { Sound.setVolume(vol.value / 100); LobbyMusic.setVolume(); });
   vol.addEventListener('change', () => { Sound.unlock(); Sound.ding(); });           // a sample of how loud that is
   vol.addEventListener('pointerdown', e => e.stopPropagation());
   const tts = $('#tts-btn');
@@ -77,18 +77,45 @@ function lobbyScene(v) {
       empty.hidden = nv.players > 0;
       list.className = 'wall-list' + (nv.players > 40 ? ' dense denser' : nv.players > 18 ? ' dense' : '');
     };
+    const descBox = v.description ? el('div', { class: 'desc-box' }, mdNode(v.description, 'desc')) : null;
     const root = sceneEl('lobby',
       el('div', { class: 'left' },
         el('h1', {}, v.title),
-        v.description ? mdNode(v.description, 'desc') : null,
+        descBox,
         el('p', { class: 'how' }, 'Scan the QR code, or go to ', el('b', {}, hostText()), ' and enter this code:'),
         el('div', { class: 'code', 'aria-label': 'Game code ' + v.code }, v.code.split('').map((d, i) => el('span', { style: { animationDelay: (i * 90) + 'ms' } }, d))),
         v.jokers ? el('div', { class: 'pill joker' }, icon('bolt'), 'Double up is on: each player can double one question') : null),
       el('div', { class: 'qr-card' }, el('img', { src: `/qr/${encodeURIComponent(v.code)}.svg`, alt: `QR code to join game ${v.code}` }), el('div', { class: 'cap' }, 'Scan to join')),
       el('div', { class: 'wall' }, el('div', { class: 'wall-head' }, countN, el('span', {}, 'players ready')), empty, list));
     sync(v);
+    if (descBox) { root.classList.add('has-desc'); fitDescription(root, descBox); }
     return { root, update: sync };
   });
+}
+
+/** A long lobby description must never push the join code or the player wall off the screen. The box gets only the height
+ *  that is left beside the QR code; if the text is taller than that it scrolls slowly up and down by itself. */
+function fitDescription(root, box) {
+  const text = box.firstElementChild;
+  const fit = () => {
+    if (!box.isConnected) { ro.disconnect(); return; }
+    const left = box.parentNode, qr = root.querySelector('.qr-card');
+    box.style.maxHeight = '0px'; box.classList.remove('scrolling');
+    const base = left.offsetHeight, gap = parseFloat(getComputedStyle(left).rowGap) || 0;        // everything in the left column except the text
+    const remPx = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+    const room = Math.max(remPx * 5.5, (qr ? qr.offsetHeight : 0) - base - gap);          // at least a few lines, however crowded the left column is
+    box.style.maxHeight = room + 'px';
+    const over = text.scrollHeight - room;
+    if (over > 4) {
+      box.style.setProperty('--shift', over + 'px');
+      box.style.setProperty('--dur', Math.max(10, 6 + over / 22).toFixed(1) + 's');
+      box.classList.add('scrolling');
+    }
+  };
+  const ro = new ResizeObserver(() => setTimeout(fit, 30));
+  let tries = 0;
+  const start = () => { if (box.isConnected) { fit(); ro.observe(root); } else if (++tries < 100) setTimeout(start, 50); };      // the scene is attached a moment after it is built
+  setTimeout(start, 50);
 }
 
 /** The clip on the projector: plays through the room, drives the "timer starts when it ends" rule. */
@@ -303,15 +330,64 @@ function atmosphere(v) {
   if (!v) return;
   const pack = v.pack || 'gameshow', held = v.phase === 'question' && v.suspense;
   setSuspense(held);
-  if (v.phase === 'lobby') Bed.start('lobby', pack);
-  else if (held) Bed.start('suspense', pack, { dur: Math.max(500, v.suspense.until - (conn ? conn.serverNow() : Date.now())) });
-  else if (v.phase === 'question' && v.q && !v.q.awaiting_media && v.q.remaining_ms == null) Bed.start('thinking', pack);
-  else Bed.stop();
+  if (v.phase === 'lobby' && v.music) { LobbyMusic.start(v.music); Bed.stop(); }          // the host's own music replaces the built-in waiting tune
+  else {
+    LobbyMusic.stop();                                                                      // the quiz has started (or there is none): fade it out
+    if (v.phase === 'lobby') Bed.start('lobby', pack);
+    else if (held) Bed.start('suspense', pack, { dur: Math.max(500, v.suspense.until - (conn ? conn.serverNow() : Date.now())) });
+    else if (v.phase === 'question' && v.q && !v.q.awaiting_media && v.q.remaining_ms == null) Bed.start('thinking', pack);
+    else Bed.stop();
+  }
   if (held) Speak.stop();
+}
+
+/** The quiz's own waiting-screen music: loops while players join, fades out when the quiz starts. Browsers only allow sound after a click,
+ *  so if it is blocked the unlock handler asks again on the first click. It follows the screen's sound switch and volume. */
+const LobbyMusic = {
+  el: null, url: '',
+  level() { return Math.max(0, Math.min(1, Sound.volume * 0.7)); },
+  start(url) {
+    if (!url || !Sound.on) { this.stop(); return; }
+    if (!this.el || this.url !== url) {
+      this.stop(true);
+      this.el = new Audio(url); this.el.loop = true; this.el.preload = 'auto'; this.url = url;
+    }
+    this.el.volume = this.level();
+    const p = this.el.play();
+    if (p && p.catch) p.catch(() => { /* waiting for the first click */ });
+  },
+  setVolume() { if (this.el) this.el.volume = this.level(); },
+  stop(now = false) {
+    const a = this.el;
+    if (!a) return;
+    this.el = null; this.url = '';
+    if (now || a.paused) { a.pause(); return; }
+    let v = a.volume;
+    const t = setInterval(() => { v -= 0.1; if (v <= 0.02) { clearInterval(t); a.pause(); a.currentTime = 0; } else a.volume = v; }, 70);
+  },
+};
+
+/** The quiz's background picture fills the whole screen at any resolution (scaled to cover, centred), under a soft wash so the text stays readable. */
+let bgNow = null;
+function applyBackground(url) {
+  url = url || '';
+  if (url === bgNow) return;
+  bgNow = url;
+  let layer = document.querySelector('.screen-bg');
+  if (!url) { layer?.remove(); document.body.classList.remove('has-bg'); return; }
+  const done = () => {
+    if (!layer) { layer = el('div', { class: 'screen-bg', 'aria-hidden': 'true' }); document.body.prepend(layer); }
+    layer.style.backgroundImage = `url("${url.replace(/"/g, '%22')}")`;
+    document.body.classList.add('has-bg');
+  };
+  const probe = new Image();                                // show it only once it has loaded, so there is no flash of an empty frame
+  probe.onload = done; probe.onerror = () => { bgNow = null; };
+  probe.src = url;
 }
 
 function render(v) {
   applySkin(v.skin);
+  applyBackground(v.bg);
   preloadImages(v.preload);
   $('#s-title').textContent = v.title;
   document.title = 'DiQuizBuzz · ' + v.title;

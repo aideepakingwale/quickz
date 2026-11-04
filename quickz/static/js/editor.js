@@ -8,7 +8,7 @@ function quizProblems(quiz) {
   quiz.questions.forEach((q, qi) => { const m = questionProblems(q); if (m.length) out.push({ qi, id: q.id, msgs: m }); });
   return out;
 }
-const cleanForSave = quiz => ({ title: quiz.title.trim(), description: quiz.description, questions: quiz.questions.map(cleanQuestion) });
+const cleanForSave = quiz => ({ title: quiz.title.trim(), description: quiz.description, cover: quiz.cover || '', screen_bg: quiz.screen_bg || '', lobby_music: quiz.lobby_music || '', questions: quiz.questions.map(cleanQuestion) });
 
 /** The questions a quiz *loads* with come from the server fully formed; give them the editor-only bits. */
 function hydrateQuestion(q) {
@@ -26,7 +26,7 @@ function hydrateQuestion(q) {
 
 /* ---------------------------------------------------------------- editor view */
 async function renderEditor(id) {
-  let quiz = { title: 'Untitled quiz', description: '', questions: [newQuestion('mcq')] };
+  let quiz = { title: 'Untitled quiz', description: '', cover: '', screen_bg: '', lobby_music: '', questions: [newQuestion('mcq')] };
   let quizId = id === 'new' ? null : id;
   if (quizId) {
     try { quiz = await api('/api/quizzes/' + quizId); quiz.questions.forEach(hydrateQuestion); }
@@ -92,6 +92,52 @@ async function renderEditor(id) {
   /* rail */
   const desc = el('textarea', { class: 'textarea', rows: 2, maxLength: 1000, placeholder: 'Lobby description (optional)', 'aria-label': 'Quiz description', value: quiz.description, style: { minHeight: '3.2rem', fontSize: '.9rem' } });
   desc.addEventListener('input', () => { quiz.description = desc.value; touch(); });
+  const coverBox = el('details', { class: 'cover-field' });
+  function drawCover() {
+    const open = coverBox.open || !!(quiz.cover || quiz.screen_bg || quiz.lobby_music);
+    const setCover = url => { quiz.cover = url; touch(); drawCover(); };
+    const setBg = url => { quiz.screen_bg = url; touch(); drawCover(); };
+    coverBox.open = open;
+    coverBox.replaceChildren(el('summary', {}, 'Cover, background and music'),
+      el('label', { class: 'faint', style: { fontSize: '.8rem', fontWeight: 600 } }, 'Cover picture (shown in your library)'),
+      pictureField({ value: quiz.cover || '', compact: true, max: 1100, label: 'Add a cover picture', onValue: setCover }),
+      typeof aiCoverButton === 'function' ? aiCoverButton(quiz, setCover) : null,
+      el('label', { class: 'faint', style: { fontSize: '.8rem', fontWeight: 600, marginTop: '.6rem' } }, 'Projector background (behind the big screen)'),
+      pictureField({ value: quiz.screen_bg || '', compact: true, max: 1920, label: 'Add a background picture', onValue: setBg }),
+      el('span', { class: 'hint' }, 'PNG, JPEG or WebP, up to 2 MB. Fills the whole screen at any resolution: it is scaled to cover the screen and centred, so the edges may be trimmed. Use a wide picture (16:9) with calm areas. The text stays readable on top.'),
+      typeof aiBackgroundButton === 'function' ? aiBackgroundButton(quiz, setBg) : null,
+      el('label', { class: 'faint', style: { fontSize: '.8rem', fontWeight: 600, marginTop: '.6rem' } }, 'Waiting-screen music'),
+      musicField());
+  }
+  /** Music for the projector while players join. It loops on the first screen and stops the moment the quiz starts. */
+  function musicField() {
+    const box = el('div', { class: 'music-field' });
+    const set = url => { quiz.lobby_music = url; touch(); drawCover(); };
+    if (quiz.lobby_music) {
+      box.append(el('audio', { controls: true, preload: 'none', src: quiz.lobby_music, 'aria-label': 'Waiting-screen music preview', style: { width: '100%' } }),
+        el('div', { class: 'row', style: { gap: '.4rem' } }, el('button', { class: 'btn ghost sm', type: 'button', style: { color: 'var(--danger)' }, onclick: () => set('') }, icon('trash'), 'Remove music')));
+    } else {
+      const file = el('input', { type: 'file', accept: '.mp3,.m4a,.ogg,.wav,audio/mpeg,audio/mp4,audio/x-m4a,audio/ogg,audio/wav', hidden: true });
+      const bar = el('i'), prog = el('div', { class: 'upl-prog', hidden: true }, bar);
+      const pick = el('button', { class: 'btn sm', type: 'button', onclick: () => file.click() }, icon('upload'), 'Upload music');
+      file.addEventListener('change', async () => {
+        const f = file.files[0]; file.value = '';
+        if (!f) return;
+        if (!/\.(mp3|m4a|ogg|wav)$/i.test(f.name)) return ui.toast('Music must be an MP3, M4A, OGG or WAV file.', 'error');
+        if (f.size > 5 * 1024 * 1024) return ui.toast(`That file is ${(f.size / 1048576).toFixed(1)} MB. Music can be at most 5 MB.`, 'error');
+        pick.disabled = true; prog.hidden = false; bar.style.width = '0%';
+        try {
+          const r = await uploadWithProgress(f, p => { bar.style.width = (p * 100) + '%'; }, 'music');
+          if (r.kind !== 'audio') throw new Error('Music must be an MP3, M4A, OGG or WAV file.');
+          set(r.url);
+        } catch (e) { ui.toast(e.message, 'error'); pick.disabled = false; prog.hidden = true; }
+      });
+      box.append(el('div', { class: 'row', style: { gap: '.5rem', flexWrap: 'wrap' } }, pick, file), prog);
+    }
+    box.append(el('span', { class: 'hint' }, 'MP3, M4A, OGG or WAV, up to 5 MB. Plays on the big screen while players join, then stops when you start the quiz. The projector needs one click on its sound button first (browsers block sound until then). Use music you have the right to play.'));
+    return box;
+  }
+  drawCover();
   const realIndex = q => quiz.questions.filter(x => x.type !== 'slide').indexOf(q) + 1;
   function drawRail() {
     const items = quiz.questions.map((q, i) => {
@@ -123,7 +169,7 @@ async function renderEditor(id) {
     const real = quiz.questions.filter(q => q.type !== 'slide');
     rail.replaceChildren(
       el('div', { class: 'rail-head' }, el('span', {}, `Questions (${real.length})`), el('span', { class: 'chip' }, icon('clock'), fmtDuration(real.reduce((a, q) => a + q.time_limit, 0)))),
-      desc, ...items,
+      desc, coverBox, ...items,
       el('div', { class: 'add-row' },
         el('button', { class: 'btn primary', type: 'button', onclick: addDialog }, icon('plus'), 'Add question'),
         el('button', { class: 'btn', type: 'button', onclick: pasteDialog }, icon('upload'), 'Paste questions'),

@@ -25,7 +25,7 @@ class Settings:
     # Optional fixed token for the very first Super Admin setup (scripted installs). Normally generated per start.
     setup_token: str = ""
     session_days: int = 7
-    max_media_mb: int = 50     # audio/video upload cap; images are always capped at 5 MB
+    max_media_mb: int = 50     # audio/video upload cap; images are always capped at 2 MB
     max_players: int = 500     # per game; QUICKZ_MAX_PLAYERS
     public_url_set: bool = field(default=False, init=False)
     origin_secret: str = ""    # behind CloudFront: refuse any request that lacks CloudFront's secret header (QUICKZ_ORIGIN_SECRET)

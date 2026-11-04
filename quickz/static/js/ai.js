@@ -250,29 +250,20 @@ const AI_PICTURE_KINDS = ['mcq', 'multi', 'tf', 'poll', 'text', 'number', 'order
 const aiPictureOk = kind => AI_PICTURE_KINDS.includes(kind);
 
 /** aiImageDialog({ question, kind, onUse(url) }): suggest a scene, draw it, preview it. Nothing is stored until the host presses Use. */
-async function aiImageDialog({ question, kind, onUse }) {
+async function aiImageDialog({ question, kind, onUse, purpose = 'question', contextText = null, title = 'Create a picture with AI' }) {
   let opts;
   try { opts = await api('/api/ai/options'); } catch (e) { return ui.toast(e.message, 'error'); }
-  const admin = typeof isAdmin === 'function' && isAdmin();
   const img = opts.images || {};
-  if (!img.available) {
-    const m = ui.modal({ title: 'Create a picture with AI', body: el('div', { class: 'col' },
-      el('p', {}, !img.enabled ? 'AI pictures are switched off.' : 'No picture service is set up yet.'),
-      el('p', { class: 'muted' }, admin ? 'Open AI settings, add a service that can draw (Google Gemini or Cloudflare), and switch pictures on.' : 'Ask a Super Admin to turn it on under AI settings. You can upload your own picture instead.')),
-      actions: admin ? [el('button', { class: 'btn', type: 'button', onclick: () => m.close() }, 'Close'),
-        el('button', { class: 'btn primary', type: 'button', onclick: () => { m.close(); go('#/ai'); } }, 'Open AI settings')]
-        : [el('button', { class: 'btn primary', type: 'button', onclick: () => m.close() }, 'Close')] });
-    return;
-  }
+  if (!img.available) return aiPicturesOff(img);
   const mem = (() => { try { return JSON.parse(localStorage.getItem(AI_MEMORY) || '{}') || {}; } catch (e) { return {}; } })();
   const f = { description: '', style: (() => { try { return localStorage.getItem('dqb:ai:style') || 'flat'; } catch (e) { return 'flat'; } })(), age_group: mem.age_group || 'all' };
   if (!img.styles[f.style]) f.style = Object.keys(img.styles)[0];
-  const text = plainText(question.text || '').trim();
+  const text = contextText != null ? contextText : plainText(question.text || '').trim();
   let result = null, busy = false, closed = false, left = img.remaining_today;
   const root = el('div', { class: 'aiw' });
   const cancel = el('button', { class: 'btn', type: 'button', onclick: () => m.close() }, 'Cancel');
   const primary = el('button', { class: 'btn primary', type: 'button' });
-  const m = ui.modal({ title: 'Create a picture with AI', wide: true, body: root, actions: [cancel, primary], onClose: () => { closed = true; } });
+  const m = ui.modal({ title, wide: true, body: root, actions: [cancel, primary], onClose: () => { closed = true; } });
   const setPrimary = (iconName, label, handler, disabled = false) => { primary.replaceChildren(icon(iconName), label); primary.onclick = handler; primary.disabled = disabled; };
   let advice = null, thinking = false, error = '';
 
@@ -284,12 +275,12 @@ async function aiImageDialog({ question, kind, onUse }) {
       f.style = v; try { localStorage.setItem('dqb:ai:style', v); } catch (x) { /* fine */ } e.currentTarget.parentNode.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b === e.currentTarget))); } }, l)));
     const age = el('select', { class: 'select', id: 'aipic-age', 'aria-label': 'Audience age', disabled: busy, onchange: e => { f.age_group = e.target.value; } },
       Object.entries(opts.age_groups).map(([v, l]) => el('option', { value: v, selected: v === f.age_group }, l)));
-    const preview = el('div', { class: 'aipic-prev' + (result ? ' has' : ''), 'aria-live': 'polite' },
+    const preview = el('div', { class: 'aipic-prev' + (purpose === 'cover' || purpose === 'background' ? ' wide' : '') + (result ? ' has' : ''), 'aria-live': 'polite' },
       busy ? el('div', { class: 'aipic-wait', role: 'status' }, el('span', { class: 'spinner', 'aria-hidden': 'true' }), el('b', {}, 'Drawing…'), el('span', { class: 'faint' }, 'This usually takes 5 to 30 seconds.'))
         : result ? el('img', { src: `data:${result.mime};base64,${result.image}`, alt: `AI picture: ${f.description}` })
         : el('div', { class: 'aipic-empty faint' }, icon('sparkle'), el('span', {}, 'Your picture will appear here')));
     root.replaceChildren(...[
-      el('p', { class: 'muted aiw-lead' }, 'One picture for this question. The AI draws what you describe; nothing is added until you press Use.'),
+      el('p', { class: 'muted aiw-lead' }, `${purpose === 'cover' ? 'A cover picture for this quiz.' : purpose === 'background' ? 'A calm background for the projector screen.' : purpose === 'explanation' ? 'A picture for the explanation of this question.' : 'One picture for this question.'} The AI draws what you describe; nothing is added until you press Use.`),
       error ? el('div', { class: 'ai-note aiw-err', role: 'alert' }, icon('warn'), el('div', {}, error)) : null,
       thinking ? el('div', { class: 'ai-note' }, el('span', { class: 'spinner', style: { width: '18px', height: '18px' }, 'aria-hidden': 'true' }), el('div', {}, 'Thinking of a picture for your question…')) : null,
       advice && !advice.suitable ? el('div', { class: 'ai-note' }, icon('warn'), el('div', {}, el('b', {}, 'Better to use a real picture. '), advice.reason || 'A drawn picture could show this wrongly.',
@@ -322,7 +313,7 @@ async function aiImageDialog({ question, kind, onUse }) {
     if (!text || !img.can_suggest) return;
     thinking = true; error = ''; paint();
     try {
-      const r = await api('/api/ai/image/idea', { method: 'POST', body: { question: text, question_type: kind, age_group: f.age_group } });
+      const r = await api('/api/ai/image/idea', { method: 'POST', body: { question: text, question_type: kind, age_group: f.age_group, purpose } });
       advice = r; if (r.description && (manual || !f.description)) f.description = r.description;
     } catch (e) { if (!manual) error = ''; else error = e.message; }
     thinking = false; if (!closed) { paint(); document.querySelector('#aipic-desc')?.focus(); }
@@ -331,7 +322,7 @@ async function aiImageDialog({ question, kind, onUse }) {
     if (busy || f.description.trim().length < 5) return;
     busy = true; error = ''; paint();
     try {
-      result = await api('/api/ai/image', { method: 'POST', body: { description: f.description, style: f.style, age_group: f.age_group, question_type: kind } });
+      result = await api('/api/ai/image', { method: 'POST', body: { description: f.description, style: f.style, age_group: f.age_group, question_type: kind, purpose } });
       left = Math.max(0, left - 1);
     } catch (e) { error = e.message; result = null; }
     busy = false; if (!closed) paint();
@@ -344,7 +335,7 @@ async function aiImageDialog({ question, kind, onUse }) {
       const url = await uploadImage(new File([bytes], 'ai-picture.' + (result.mime === 'image/jpeg' ? 'jpg' : result.mime === 'image/webp' ? 'webp' : 'png'), { type: result.mime }));
       onUse(url);
       api('/api/ai/accept', { method: 'POST', body: { audit_id: result.audit_id, count: 1 } }).catch(() => {});
-      m.close(); ui.toast('AI picture added. Check it looks right before your game.', 'success');
+      m.close(); ui.toast(purpose === 'cover' ? 'AI cover added. Check it looks right.' : purpose === 'background' ? 'AI background added. Check how it looks on the big screen.' : 'AI picture added. Check it looks right before your game.', 'success');
     } catch (e) { error = e.message; paint(); }
   }
   paint();
@@ -403,6 +394,137 @@ function picturesAdminCard(d, save, saveProvider) {
         'Only the description is sent. No player names, emails or answers are ever sent.',
         'A host sees the picture as a preview and nothing is stored until they press Use. Every attempt is recorded in the audit log below with the exact prompt.',
         'Free services such as Google’s may use prompts and pictures to improve their products. Check each provider’s terms, including who owns the pictures.'].map(t => el('li', {}, t)))));
+}
+
+/* ---------------------------------------------------------------- host: pictures for the answer options */
+const AI_OPTION_KINDS = ['mcq', 'multi', 'poll', 'order', 'match'];
+
+function aiPicturesOff(img) {
+  const admin = typeof isAdmin === 'function' && isAdmin();
+  const m = ui.modal({ title: 'Create pictures with AI', body: el('div', { class: 'col' },
+    el('p', {}, !img.enabled ? 'AI pictures are switched off.' : 'No picture service is set up yet.'),
+    el('p', { class: 'muted' }, admin ? 'Open AI settings, add a service that can draw (Google Gemini or Cloudflare), and switch pictures on.' : 'Ask a Super Admin to turn it on under AI settings. You can upload your own pictures instead.')),
+    actions: admin ? [el('button', { class: 'btn', type: 'button', onclick: () => m.close() }, 'Close'),
+      el('button', { class: 'btn primary', type: 'button', onclick: () => { m.close(); go('#/ai'); } }, 'Open AI settings')]
+      : [el('button', { class: 'btn primary', type: 'button', onclick: () => m.close() }, 'Close')] });
+}
+
+/** aiOptionPicturesDialog({ question, kind, onApply }): draw one picture per answer option, in one style, and keep the ones the host likes. */
+async function aiOptionPicturesDialog({ question, kind, onApply }) {
+  let opts;
+  try { opts = await api('/api/ai/options'); } catch (e) { return ui.toast(e.message, 'error'); }
+  const img = opts.images || {};
+  if (!img.available) return aiPicturesOff(img);
+  const rows = question.options.map(o => ({ o, desc: plainText(o.text || '').trim().slice(0, 120) })).filter(r => r.desc).slice(0, 6)
+    .map(r => ({ ...r, state: 'idle', result: null, error: '', keep: true }));
+  if (rows.length < 2) return ui.toast('Write at least two options first, then ask for pictures.', 'error');
+  const mem = (() => { try { return JSON.parse(localStorage.getItem(AI_MEMORY) || '{}') || {}; } catch (e) { return {}; } })();
+  const f = { style: (() => { try { return localStorage.getItem('dqb:ai:style') || 'flat'; } catch (e) { return 'flat'; } })(), age_group: mem.age_group || 'all' };
+  if (!img.styles[f.style]) f.style = Object.keys(img.styles)[0];
+  let left = img.remaining_today, running = false, stop = false, closed = false, error = '', progress = '';
+  const root = el('div', { class: 'aiw' });
+  const cancel = el('button', { class: 'btn', type: 'button', onclick: () => m.close() }, 'Cancel');
+  const more = el('button', { class: 'btn', type: 'button', onclick: () => drawAll() }, icon('sparkle'), 'Draw the rest');
+  const primary = el('button', { class: 'btn primary', type: 'button' });
+  const m = ui.modal({ title: 'Create pictures for the options with AI', wide: true, body: root, actions: [cancel, primary], onClose: () => { closed = true; stop = true; } });
+  const done = () => rows.filter(r => r.result);
+  const todo = () => rows.filter(r => !r.result && r.desc.trim().length >= 5);
+
+  function card(r, i) {
+    const thumb = r.state === 'busy' ? el('div', { class: 'aiopt-thumb' }, el('span', { class: 'spinner', 'aria-hidden': 'true' }))
+      : r.result ? el('div', { class: 'aiopt-thumb has' }, el('img', { src: `data:${r.result.mime};base64,${r.result.image}`, alt: `AI picture for option ${i + 1}: ${r.desc}` }))
+      : r.o.image ? el('div', { class: 'aiopt-thumb has' }, el('img', { src: r.o.image, alt: 'Current picture' }), el('span', { class: 'aiopt-tag' }, 'Current'))
+      : el('div', { class: 'aiopt-thumb faint' }, icon('sparkle'));
+    const input = el('input', { class: 'input', value: r.desc, maxLength: 120, disabled: running, 'aria-label': `What picture ${i + 1} should show`, oninput: e => { r.desc = e.target.value; refreshAction(); } });
+    return el('article', { class: 'aiopt' + (r.result && !r.keep ? ' off' : '') },
+      thumb, input,
+      r.error ? el('div', { class: 'error-text', role: 'alert', style: { fontSize: '.8rem' } }, r.error) : null,
+      el('div', { class: 'row', style: { gap: '.4rem', justifyContent: 'space-between' } },
+        r.result ? el('label', { class: 'check', style: { margin: 0, padding: 0 } }, el('input', { type: 'checkbox', checked: r.keep, 'aria-label': `Use picture ${i + 1}`, onchange: e => { r.keep = e.target.checked; paint(); } }), 'Use') : el('span'),
+        el('button', { class: 'btn ghost sm', type: 'button', disabled: running || left <= 0 || r.desc.trim().length < 5, onclick: () => redraw(r) }, icon('refresh'), r.result ? 'Redraw' : 'Draw')));
+  }
+  function paint() {
+    const styleBar = el('div', { class: 'chips-pick', role: 'radiogroup', 'aria-label': 'Picture style' }, Object.entries(img.styles).map(([v, l]) => el('button', { type: 'button', role: 'radio', 'aria-pressed': String(f.style === v), disabled: running, onclick: e => {
+      f.style = v; try { localStorage.setItem('dqb:ai:style', v); } catch (x) { /* fine */ } e.currentTarget.parentNode.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b === e.currentTarget))); } }, l)));
+    const age = el('select', { class: 'select', 'aria-label': 'Audience age', disabled: running, onchange: e => { f.age_group = e.target.value; } },
+      Object.entries(opts.age_groups).map(([v, l]) => el('option', { value: v, selected: v === f.age_group }, l)));
+    root.replaceChildren(...[
+      el('p', { class: 'muted aiw-lead' }, 'One picture for each answer, all drawn in the same style so they look like a set. Edit what each should show, draw them, and keep the ones you like. Nothing is added until you press Use.'),
+      error ? el('div', { class: 'ai-note aiw-err', role: 'alert' }, icon('warn'), el('div', {}, error)) : null,
+      el('div', { class: 'aiw-row' }, el('div', { class: 'field' }, el('label', {}, 'Style (shared by all)'), styleBar), el('div', { class: 'field' }, el('label', {}, 'Audience'), age)),
+      el('div', { class: 'aiopt-grid' }, rows.map(card)),
+      el('div', { class: 'faint', style: { fontSize: '.82rem' }, role: 'status', 'aria-live': 'polite' }, progress || `${left} picture${left === 1 ? '' : 's'} left today. Each one counts as a request. Check them before your game: an AI can draw real things wrongly.`)].filter(Boolean));
+    refreshAction();
+  }
+  function refreshAction() {
+    more.remove();
+    const n = done().filter(r => r.keep).length, rest = todo().length;
+    if (running) { primary.replaceChildren(icon('sparkle'), 'Drawing…'); primary.disabled = true; primary.onclick = null; return; }
+    if (n) { primary.replaceChildren(icon('check'), `Use ${n} picture${n === 1 ? '' : 's'}`); primary.disabled = false; primary.onclick = apply; if (rest && left > 0) primary.before(more); }
+    else { primary.replaceChildren(icon('sparkle'), `Draw ${rest} picture${rest === 1 ? '' : 's'}`); primary.disabled = !rest || left <= 0; primary.onclick = drawAll; }
+  }
+  async function drawOne(r) {
+    r.state = 'busy'; r.error = ''; paint();
+    try {
+      r.result = await api('/api/ai/image', { method: 'POST', body: { description: r.desc, purpose: 'option', question_type: kind, style: f.style, age_group: f.age_group } });
+      r.state = 'done'; r.keep = true; left = Math.max(0, left - 1);
+    } catch (e) { r.state = 'error'; r.error = e.message; if (/too quickly|AI pictures for today|allowance|switched off/.test(e.message)) { stop = true; error = e.message; } }
+  }
+  async function drawAll() {
+    running = true; stop = false; error = '';
+    const list = todo(); let n = 0;
+    for (const r of list) {
+      if (closed || stop || left <= 0) break;
+      progress = `Drawing picture ${++n} of ${list.length}…`;
+      await drawOne(r);
+    }
+    running = false; progress = ''; if (!closed) paint();
+  }
+  async function redraw(r) { running = true; error = ''; progress = 'Drawing…'; r.result = null; await drawOne(r); running = false; progress = ''; if (!closed) paint(); }
+  async function apply() {
+    const chosen = done().filter(r => r.keep);
+    primary.disabled = true; primary.replaceChildren(el('span', { class: 'spinner', style: { width: '16px', height: '16px' }, 'aria-hidden': 'true' }), 'Saving…');
+    let applied = 0;
+    try {
+      for (const r of chosen) {
+        const bytes = Uint8Array.from(atob(r.result.image), c => c.charCodeAt(0));
+        r.o.image = await uploadImage(new File([bytes], 'ai-option.' + (r.result.mime === 'image/jpeg' ? 'jpg' : r.result.mime === 'image/webp' ? 'webp' : 'png'), { type: r.result.mime }), 560);
+        applied++;
+        api('/api/ai/accept', { method: 'POST', body: { audit_id: r.result.audit_id, count: 1 } }).catch(() => {});
+      }
+      m.close(); ui.toast(`${applied} AI picture${applied === 1 ? '' : 's'} added. Check them before your game.`, 'success');
+    } catch (e) { error = e.message; paint(); }
+    finally { if (applied) onApply(); }
+  }
+  paint();
+}
+
+/* ---------------------------------------------------------------- buttons used by the editor */
+const aiMiniButton = (label, onclick, extra = {}) => el('button', { class: 'btn ai-btn sm', type: 'button', onclick, ...extra }, icon('sparkle'), label);
+
+/** Under the explanation: a picture for the explanation. */
+function aiExplainButton(q, kind, onUse) {
+  if (!aiPictureOk(kind)) return null;
+  return aiMiniButton('Create with AI', () => aiImageDialog({ question: q, kind, purpose: 'explanation', title: 'Create an explanation picture with AI',
+    contextText: plainText(q.explanation || '').trim() || plainText(q.text || '').trim(), onUse }));
+}
+
+/** Above the answer options: one picture per option. */
+function aiOptionsButton(q, kind, onApply) {
+  if (!AI_OPTION_KINDS.includes(kind)) return null;
+  return aiMiniButton('Create pictures for the options with AI', () => aiOptionPicturesDialog({ question: q, kind, onApply }), { title: 'One picture for each answer, drawn in the same style' });
+}
+
+/** In the editor rail: a calm picture for the projector background. */
+function aiBackgroundButton(quiz, onUse) {
+  return aiMiniButton(quiz.screen_bg ? 'Replace with an AI background' : 'Create a background with AI', () => aiImageDialog({ question: {}, kind: 'background', purpose: 'background', title: 'Create a projector background with AI',
+    contextText: [quiz.title, quiz.description].map(t => String(t || '').trim()).filter(Boolean).join('. '), onUse }));
+}
+
+/** In the editor rail: a cover picture for the whole quiz. */
+function aiCoverButton(quiz, onUse) {
+  return aiMiniButton(quiz.cover ? 'Replace with an AI cover' : 'Create a cover with AI', () => aiImageDialog({ question: {}, kind: 'cover', purpose: 'cover', title: 'Create a cover picture with AI',
+    contextText: [quiz.title, quiz.description].map(t => String(t || '').trim()).filter(Boolean).join('. '), onUse }));
 }
 
 const questionKindLabel = (t, q) => (t === 'mcq' && q && q.options.length === 2 && q.options[0].text === 'True' ? 'True or false'
@@ -510,7 +632,7 @@ async function renderAISettings() {
     const summary = r => {
       const p = r.params || {};
       if (r.action === 'generate') return [el('b', {}, p.topic || '(no topic)'), el('div', { class: 'faint' }, [p.question_type, p.difficulty, p.age_group, p.quiz_type].filter(Boolean).join(' · '))];
-      if (r.action === 'image') return [el('b', {}, p.description || '(no description)'), el('div', { class: 'faint' }, [p.question_type, p.style, p.age_group].filter(Boolean).join(' · '))];
+      if (r.action === 'image') return [el('b', {}, p.description || '(no description)'), el('div', { class: 'faint' }, [p.purpose, p.question_type, p.style, p.age_group].filter(Boolean).join(' · '))];
       if (r.action === 'image_idea') return [el('b', {}, p.question || '(no question)'), el('div', { class: 'faint' }, r.message || '')];
       return [el('span', {}, r.message || '')];
     };
@@ -541,7 +663,7 @@ async function renderAISettings() {
       Overview: () => [
         kv('Time', new Date(r.ts * 1000).toLocaleString()), kv('User', r.username), kv('Action', r.action), el('div', { class: 'ai-kv' }, el('span', { class: 'faint' }, 'Result'), aiChip(r.status)),
         kv('Service', r.provider), kv('Model', r.model), kv('From address', r.ip), kv('Prompt version', q.prompt_version || q.template_version),
-        kv('Topic', p.topic), kv('Picture description', p.description), kv('Picture style', p.style), kv('Question asked about', p.question), kv('Question kind', r.action.startsWith('image') ? p.question_type : ''), kv('Focus text', p.notes), kv('Quiz type', p.quiz_type), kv('Question type', p.question_type), kv('Difficulty', p.difficulty), kv('Level', p.level), kv('Age group', p.age_group), kv('Tone', p.tone), kv('Language', p.language),
+        kv('Topic', p.topic), kv('Picture description', p.description), kv('Picture for', p.purpose), kv('Picture style', p.style), kv('Question asked about', p.question), kv('Question kind', r.action.startsWith('image') ? p.question_type : ''), kv('Focus text', p.notes), kv('Quiz type', p.quiz_type), kv('Question type', p.question_type), kv('Difficulty', p.difficulty), kv('Level', p.level), kv('Age group', p.age_group), kv('Tone', p.tone), kv('Language', p.language),
         kv('Explanations', p.explanations === false ? 'Off' : p.explanations ? 'On' : ''), kv('Replacing a draft', p.refine ? `${p.refine.change}: “${p.refine.text}”` : ''),
         kv('Quiz title used', c.quiz_title), kv('Existing questions sent', c.existing_sent),
         r.action.startsWith('image') ? null : kv('Asked for', r.requested), r.action.startsWith('image') ? kv('Picture size', f.bytes ? `${Math.round(f.bytes / 1024)} KB ${f.mime || ''}` : '') : kv('Safe questions returned', r.returned), r.action === 'image' ? kv('Fingerprint (SHA-256)', f.sha256) : null, r.action === 'image' ? kv('Used by the host', r.accepted ? 'Yes' : 'No') : kv('Added by the host', r.accepted), kv('Tokens in / out', `${r.tokens_in} / ${r.tokens_out}`), kv('Time taken', r.latency_ms ? r.latency_ms + ' ms' : ''),

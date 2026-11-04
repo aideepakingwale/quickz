@@ -129,16 +129,18 @@ async function shrinkImage(file, maxDim) {
     return blob && blob.type === 'image/webp' && blob.size < file.size ? new File([blob], 'picture.webp', { type: 'image/webp' }) : file;
   } catch (e) { return file; } finally { URL.revokeObjectURL(url); }
 }
+const MAX_PICTURE_BYTES = 2 * 1024 * 1024;          // pictures (the server enforces the same cap)
 async function uploadImage(file, maxDim = 1100) {
   if (!file || !file.type.startsWith('image/')) throw new Error('Choose an image file (PNG, JPEG, GIF or WebP).');
   const small = await shrinkImage(file, maxDim);              // phones on slow Wi-Fi thank you: big photos become a few hundred KB
+  if (small.size > MAX_PICTURE_BYTES) throw new Error(`This picture is ${(small.size / 1048576).toFixed(1)} MB, and pictures can be at most 2 MB. Choose a smaller one, or save it as JPEG or WebP.`);
   return (await api('/api/uploads', { method: 'POST', raw: small })).url;
 }
 /** Upload with a progress callback (fetch can't report upload progress). Resolves to {url, kind}. */
-function uploadWithProgress(file, onProgress) {
+function uploadWithProgress(file, onProgress, purpose = '') {
   return new Promise((resolve, reject) => {
     const x = new XMLHttpRequest();
-    x.open('POST', '/api/uploads');
+    x.open('POST', '/api/uploads' + (purpose ? '?purpose=' + encodeURIComponent(purpose) : ''));
     x.setRequestHeader('X-Quickz', '1');
     x.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
     x.upload.onprogress = e => { if (e.lengthComputable) onProgress(e.loaded / e.total); };
@@ -277,7 +279,7 @@ function questionForm(q, h) {
   /* -- picture (+ effect) */
   const picBox = el('div');
   const drawPic = () => {
-    const field = pictureField({ value: q.image, label: kind === 'pin' ? 'Add the picture players will point at' : kind === 'jigsaw' ? 'Add the picture to cut into a puzzle' : 'Drop a picture here, or click to browse', hint: 'PNG, JPEG, GIF or WebP. Large photos are shrunk automatically.',
+    const field = pictureField({ value: q.image, label: kind === 'pin' ? 'Add the picture players will point at' : kind === 'jigsaw' ? 'Add the picture to cut into a puzzle' : 'Drop a picture here, or click to browse', hint: 'PNG, JPEG, GIF or WebP, up to 2 MB. Large photos are shrunk automatically.',
       onValue: (url, img) => {
         if (img === undefined) { q.image = url; if (!url) { q.image_effect = 'none'; if (q.pin) q.pin.placed = false; } h.change(); h.rebuild(); return; }
         if (q.pin && img.naturalWidth) { const ar = img.naturalWidth / img.naturalHeight; if (Math.abs(ar - q.pin.ar) > 0.001) { q.pin.ar = ar; h.change(); } }
@@ -382,7 +384,8 @@ function questionForm(q, h) {
     const ex = el('input', { class: 'input', type: 'text', maxLength: 500, value: q.explanation, placeholder: 'Shown after the answer is revealed', 'aria-label': 'Explanation' });
     ex.addEventListener('input', () => { q.explanation = ex.value; h.change(); });
     root.append(el('div', { class: 'field' }, el('label', {}, 'Explanation (optional)'), ex,
-      el('div', { class: 'row', style: { marginTop: '.4rem' } }, pictureField({ value: q.explain_image, compact: true, label: 'Add a picture to the explanation', onValue: url => { q.explain_image = url; h.change(); } }),
+      el('div', { class: 'row', style: { marginTop: '.4rem', flexWrap: 'wrap', gap: '.5rem' } }, pictureField({ value: q.explain_image, compact: true, label: 'Add a picture to the explanation', onValue: url => { q.explain_image = url; h.change(); } }),
+        typeof aiExplainButton === 'function' ? aiExplainButton(q, kind, url => { q.explain_image = url; q._seen = true; h.change(); h.rebuild(); }) : null,
         el('span', { class: 'hint' }, 'A picture can accompany the explanation (a map, the real photo…).'))));
   }
 
@@ -517,7 +520,8 @@ function questionForm(q, h) {
       numbered: kind === 'order', moveable: kind === 'order', tickMode: kind === 'poll' || kind === 'order' ? null : (kind === 'multi' ? 'multi' : 'single'),
       canRemove: !fixed, fixedText: fixed ? plainText(o.text) : null, placeholder: kind === 'order' ? `Item ${i + 1}` : `Option ${i + 1}` })));
     const label = kind === 'multi' ? 'Answers: tick every correct one' : kind === 'poll' ? 'Options to vote on' : kind === 'order' ? 'Items: list them in the CORRECT order' : 'Answers: tick the correct one';
-    return el('div', { class: 'field' }, el('label', {}, label), list,
+    const aiPics = typeof aiOptionsButton === 'function' ? aiOptionsButton(q, kind, () => { q._seen = true; h.change(); h.rebuild(); }) : null;
+    return el('div', { class: 'field' }, el('label', {}, label), aiPics ? el('div', { style: { marginBottom: '.5rem' } }, aiPics) : null, list,
       !fixed && q.options.length < max ? el('div', {}, el('button', { class: 'btn sm', type: 'button', style: { marginTop: '.5rem' }, onclick: () => { q.options.push(emptyOpt()); h.change(); h.rebuild(() => $$('.opt-row .rte-body', root).pop()?.focus()); } }, icon('plus'), kind === 'order' ? 'Add an item' : 'Add option')) : null,
       kind === 'order' ? el('label', { class: 'check' }, el('input', { type: 'checkbox', checked: q.partial !== false, onchange: e => { q.partial = e.target.checked; h.change(); } }),
         el('div', {}, el('div', { class: 't' }, 'Partial points for nearly-right orders'), el('div', { class: 'd' }, 'Otherwise the whole sequence must be right to score.'))) : null,

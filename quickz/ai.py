@@ -82,7 +82,7 @@ DEFAULT_SETTINGS = {
     "images_enabled": False,        # AI pictures for questions; off until a Super Admin turns it on
     "images_provider": "",          # which service draws first (gemini, cloudflare or custom)
     "images_per_user_day": 20,      # pictures per host per day
-    "images_per_minute": 3,         # pictures per host per minute
+    "images_per_minute": 6,         # pictures per host per minute (a set of answer-card pictures is up to 6)
     "images_global_day": 100,       # pictures for everyone per day
     "mcp_enabled": False,           # the assistant-access (MCP) server; off until a Super Admin turns it on
     "mcp_per_minute": 60,           # calls per token per minute

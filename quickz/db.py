@@ -194,6 +194,15 @@ class Database:
         if "avatar" not in cols:  # databases created by the first MVP
             self._conn.execute("ALTER TABLE players ADD COLUMN avatar TEXT NOT NULL DEFAULT ''")
             self._conn.commit()
+        if "lobby_music" not in {r[1] for r in self._conn.execute("PRAGMA table_info(quizzes)")}:   # music for the waiting screen
+            self._conn.execute("ALTER TABLE quizzes ADD COLUMN lobby_music TEXT NOT NULL DEFAULT ''")
+            self._conn.commit()
+        if "screen_bg" not in {r[1] for r in self._conn.execute("PRAGMA table_info(quizzes)")}:   # the projector background picture
+            self._conn.execute("ALTER TABLE quizzes ADD COLUMN screen_bg TEXT NOT NULL DEFAULT ''")
+            self._conn.commit()
+        if "cover" not in {r[1] for r in self._conn.execute("PRAGMA table_info(quizzes)")}:      # a cover picture for each quiz
+            self._conn.execute("ALTER TABLE quizzes ADD COLUMN cover TEXT NOT NULL DEFAULT ''")
+            self._conn.commit()
         if "image_model" not in {r[1] for r in self._conn.execute("PRAGMA table_info(ai_providers)")}:   # AI pictures, added later
             self._conn.execute("ALTER TABLE ai_providers ADD COLUMN image_model TEXT NOT NULL DEFAULT ''")
             self._conn.commit()
@@ -263,7 +272,7 @@ class Database:
         """owner_id=None lists everything (super admin); otherwise only that owner's quizzes."""
         where, args = ("WHERE q.owner_id=?", (owner_id,)) if owner_id is not None else ("", ())
         rows = self._all(
-            f"""SELECT q.id,q.title,q.description,q.questions,q.updated_at,q.owner_id,
+            f"""SELECT q.id,q.title,q.description,q.cover,q.questions,q.updated_at,q.owner_id,
                       COALESCE(u.display_name,'') AS owner_name,
                       (SELECT COUNT(*) FROM games g WHERE g.quiz_id=q.id) AS plays,
                       (SELECT MAX(created_at) FROM games g WHERE g.quiz_id=q.id) AS last_played
@@ -281,15 +290,15 @@ class Database:
     def create_quiz(self, quiz: dict, owner_id=None) -> int:
         now = time.time()
         cur = self._run(
-            "INSERT INTO quizzes(title,description,questions,created_at,updated_at,owner_id) VALUES(?,?,?,?,?,?)",
-            (quiz["title"], quiz["description"], json.dumps(quiz["questions"]), now, now, owner_id),
+            "INSERT INTO quizzes(title,description,cover,screen_bg,lobby_music,questions,created_at,updated_at,owner_id) VALUES(?,?,?,?,?,?,?,?,?)",
+            (quiz["title"], quiz["description"], quiz.get("cover", ""), quiz.get("screen_bg", ""), quiz.get("lobby_music", ""), json.dumps(quiz["questions"]), now, now, owner_id),
         )
         return cur.lastrowid
 
     def update_quiz(self, quiz_id: int, quiz: dict) -> bool:
         cur = self._run(
-            "UPDATE quizzes SET title=?,description=?,questions=?,updated_at=? WHERE id=?",
-            (quiz["title"], quiz["description"], json.dumps(quiz["questions"]), time.time(), quiz_id),
+            "UPDATE quizzes SET title=?,description=?,cover=?,screen_bg=?,lobby_music=?,questions=?,updated_at=? WHERE id=?",
+            (quiz["title"], quiz["description"], quiz.get("cover", ""), quiz.get("screen_bg", ""), quiz.get("lobby_music", ""), json.dumps(quiz["questions"]), time.time(), quiz_id),
         )
         return cur.rowcount > 0
 
