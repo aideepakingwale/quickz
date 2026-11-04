@@ -10,7 +10,8 @@ These already existed as fixed numbers or server environment variables. Now they
 | --- | --- | --- | --- |
 | Players per game | 500 (or `QUICKZ_MAX_PLAYERS`) | 10 to 5000 | The most players who can join one game |
 | Questions per quiz | 200 | 10 to 500 | Quizzes over this cannot be saved. Existing quizzes are not changed |
-| Largest picture | 2 MB | 1 to 5 MB | Pictures are shrunk in the browser first. A large animated GIF cannot be shrunk, so it must fit |
+| Largest picture | 2 MB | 1 to 5 MB | Photos are shrunk in the browser first, and big animated GIFs by the server |
+| Largest animated GIF to accept | 25 MB | 3 to 50 MB | A GIF bigger than the largest picture is shrunk automatically to fit it (see below). GIFs bigger than this are refused |
 | Largest lobby music file | 5 MB | 1 to 20 MB | MP3, M4A, OGG or WAV only |
 | Largest question audio or video | 50 MB (or `QUICKZ_MAX_MEDIA_MB`) | 1 to 500 MB | Clips attached to questions |
 | Stay signed in for | 7 days | 1 to 90 days | Applies to new sign-ins |
@@ -19,6 +20,10 @@ These already existed as fixed numbers or server environment variables. Now they
 | Sign-in pause after a lock | 5 minutes | 1 to 120 minutes | |
 
 A changed setting shows a **Changed** tag and a **Reset** link that goes back to the value the server started with (the default). **Reset all to defaults** does this for every setting. Setting a value equal to the default simply stops storing it.
+
+## Animated GIFs
+
+A GIF that fits the picture limit is stored exactly as uploaded. A bigger one (up to the GIF limit above) is shrunk by the server and stays animated: first a smaller picture and fewer colours, then fewer frames if it is still too big (the time of dropped frames is added to the rest, so the speed is the same). The host sees how much it was shrunk. Transparent areas become white. A GIF that cannot be brought under the limit, or is extremely large or long, is refused with a clear message and nothing is stored. This needs the Pillow library, which is in `requirements-prod.txt`; without it big GIFs are refused rather than shrunk.
 
 ## Clean up quizzes
 

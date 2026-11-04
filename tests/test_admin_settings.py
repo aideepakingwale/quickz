@@ -41,7 +41,7 @@ def test_only_the_super_admin_can_see_or_change_settings_and_clean_up(app, admin
 def test_the_screen_lists_every_setting_with_its_default_range_and_group(admin):
     view = admin.get("/api/admin/settings").json()
     keys = {s["key"] for s in view["settings"]}
-    assert keys == {"max_players", "max_questions", "max_image_mb", "max_music_mb", "max_media_mb", "session_days", "password_min", "login_attempts", "login_lock_minutes"}
+    assert keys == {"max_players", "max_questions", "max_image_mb", "max_gif_mb", "max_music_mb", "max_media_mb", "session_days", "password_min", "login_attempts", "login_lock_minutes"}
     s = value(view, "max_image_mb")
     assert (s["default"], s["value"], s["min"], s["max"], s["unit"], s["changed"]) == (2, 2, 1, 5, "MB", False)
     assert {s["group"] for s in view["settings"]} <= {g["id"] for g in view["groups"]}

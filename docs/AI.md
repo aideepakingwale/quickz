@@ -102,7 +102,7 @@ These are settings of the **quiz**, found in the editor under the quiz descripti
 - **On players' phones** the same quiz settings carry over. While players wait, the phone shows the lobby description in a box that fits the screen and scrolls by itself when it is long, and plays the music (with its own **Music on / off** button; the choice is remembered on that phone). When the quiz starts, the description goes and the music fades out. The background picture stays behind the whole game, under a stronger wash so text stays easy to read. In the **Host** dialog, a switch **Waiting-screen music on phones** (on by default, shown only for quizzes that have music) lets you turn the phone music off when everyone is in the room with the big screen, so it plays from one place.
 - **Long lobby descriptions** no longer push the join code and player wall off the screen. The description gets the room left beside the QR code and scrolls slowly up and down by itself when it is longer than that (it pauses at each end, and stays still for people who ask their computer to reduce motion). The title shows on one line when there is a description.
 
-Limits: pictures are 2 MB at most everywhere (large photos are shrunk in the browser first; a big animated GIF may be refused). Other audio and video you attach to questions keep the existing limit.
+Limits: pictures are 2 MB at most everywhere (the Super Admin can change this). Large photos are shrunk in the browser first, and animated GIFs bigger than that are shrunk by the server and stay animated. Other audio and video you attach to questions keep the existing limit.
 
 ## Audit log
 

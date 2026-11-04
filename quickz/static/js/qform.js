@@ -133,9 +133,13 @@ const pictureMB = () => window.QUICKZ_MAX_IMAGE_MB || 2;          // pictures (t
 async function uploadImage(file, maxDim = 1100) {
   if (!file || !file.type.startsWith('image/')) throw new Error('Choose an image file (PNG, JPEG, GIF or WebP).');
   const small = await shrinkImage(file, maxDim);              // phones on slow Wi-Fi thank you: big photos become a few hundred KB
-  if (small.size > pictureMB() * 1048576 && file.type === 'image/gif') throw new Error(`This GIF is ${(small.size / 1048576).toFixed(1)} MB. Pictures can be at most ${pictureMB()} MB, and an animated GIF cannot be shrunk here without losing its animation. Make the GIF smaller first (for example at ezgif.com: fewer frames or a smaller size), or ask a Super Admin to raise the picture limit on the Settings page.`);
-  if (small.size > pictureMB() * 1048576) throw new Error(`This picture is ${(small.size / 1048576).toFixed(1)} MB, and pictures can be at most ${pictureMB()} MB. Choose a smaller one, or save it as JPEG or WebP.`);
-  return (await api('/api/uploads', { method: 'POST', raw: small })).url;
+  const gifMB = Math.max(window.QUICKZ_MAX_GIF_MB || 25, pictureMB());
+  if (file.type === 'image/gif') {                              // a big animated GIF is shrunk by the server, so it only has to be under the larger GIF limit
+    if (small.size > gifMB * 1048576) throw new Error(`This GIF is ${(small.size / 1048576).toFixed(1)} MB. GIFs up to ${gifMB} MB are shrunk automatically to fit the ${pictureMB()} MB picture limit; this one is too big. Use a shorter or smaller GIF.`);
+  } else if (small.size > pictureMB() * 1048576) throw new Error(`This picture is ${(small.size / 1048576).toFixed(1)} MB, and pictures can be at most ${pictureMB()} MB. Choose a smaller one, or save it as JPEG or WebP.`);
+  const r = await api('/api/uploads', { method: 'POST', raw: small });
+  if (r.shrunk) ui.toast(`Your GIF was ${(r.shrunk.from / 1048576).toFixed(1)} MB, so it was shrunk to ${(r.shrunk.to / 1048576).toFixed(1)} MB (smaller, fewer colours or fewer frames) to fit the ${pictureMB()} MB limit. It still animates.`, 'success', 7000);
+  return r.url;
 }
 /** Upload with a progress callback (fetch can't report upload progress). Resolves to {url, kind}. */
 function uploadWithProgress(file, onProgress, purpose = '') {
@@ -280,7 +284,7 @@ function questionForm(q, h) {
   /* -- picture (+ effect) */
   const picBox = el('div');
   const drawPic = () => {
-    const field = pictureField({ value: q.image, label: kind === 'pin' ? 'Add the picture players will point at' : kind === 'jigsaw' ? 'Add the picture to cut into a puzzle' : 'Drop a picture here, or click to browse', hint: `PNG, JPEG, GIF or WebP, up to ${pictureMB()} MB. Large photos are shrunk automatically.`,
+    const field = pictureField({ value: q.image, label: kind === 'pin' ? 'Add the picture players will point at' : kind === 'jigsaw' ? 'Add the picture to cut into a puzzle' : 'Drop a picture here, or click to browse', hint: `PNG, JPEG, GIF or WebP, up to ${pictureMB()} MB. Large photos and animated GIFs are shrunk automatically.`,
       onValue: (url, img) => {
         if (img === undefined) { q.image = url; if (!url) { q.image_effect = 'none'; if (q.pin) q.pin.placed = false; } h.change(); h.rebuild(); return; }
         if (q.pin && img.naturalWidth) { const ar = img.naturalWidth / img.naturalHeight; if (Math.abs(ar - q.pin.ar) > 0.001) { q.pin.ar = ar; h.change(); } }

@@ -27,6 +27,7 @@ from fastapi.staticfiles import StaticFiles
 from . import ai as ai_mod
 from . import aimage as aimage_mod
 from . import adminconf as adminconf_mod
+from . import gifshrink
 from . import mcp as mcp_mod
 from . import auth
 from .cloud import CloudSync
@@ -255,7 +256,7 @@ def create_app(settings: Settings, guard: auth.LoginGuard | None = None, cloud: 
     async def auth_state(request: Request):
         u = user_from_cookie(request.cookies)
         return {"setup_needed": db.count_users() == 0, "user": public_user(u) if u else None, "public_url": settings.public_url,
-                "max_media_mb": settings.max_media_mb, "max_image_mb": settings.max_image_mb, "max_music_mb": settings.max_music_mb}
+                "max_media_mb": settings.max_media_mb, "max_image_mb": settings.max_image_mb, "max_music_mb": settings.max_music_mb, "max_gif_mb": settings.max_gif_mb}
 
     @app.post("/api/auth/setup")
     async def auth_setup(request: Request, response: Response):
@@ -465,8 +466,9 @@ def create_app(settings: Settings, guard: auth.LoginGuard | None = None, cloud: 
         Streamed to disk, type decided by sniffing the bytes."""
         media_cap = settings.max_media_mb * 1024 * 1024
         image_cap, music_cap = settings.max_image_mb * 1024 * 1024, settings.max_music_mb * 1024 * 1024
+        gif_cap = max(settings.max_gif_mb, settings.max_image_mb) * 1024 * 1024          # an animated GIF over image_cap is accepted up to here, then shrunk
         music = request.query_params.get("purpose") == "music"
-        if int(request.headers.get("content-length") or 0) > (music_cap if music else max(media_cap, image_cap)):
+        if int(request.headers.get("content-length") or 0) > (music_cap if music else max(media_cap, gif_cap)):
             raise HTTPException(413, f"Music is too large (max {settings.max_music_mb} MB)" if music else f"File too large (max {settings.max_media_mb} MB)")
 
         def check_music(kind, ext):
@@ -492,8 +494,8 @@ def create_app(settings: Settings, guard: auth.LoginGuard | None = None, cloud: 
                             head = b""
                     else:
                         fh.write(chunk)
-                    if size > (image_cap if kind == "image" else music_cap if music else media_cap):
-                        raise HTTPException(413, f"Image too large (max {settings.max_image_mb} MB)" if kind == "image" else f"Music is too large (max {settings.max_music_mb} MB)" if music else f"File too large (max {settings.max_media_mb} MB)")
+                    if size > ((gif_cap if ext == ".gif" else image_cap) if kind == "image" else music_cap if music else media_cap):
+                        raise HTTPException(413, (f"This GIF is too large (max {max(settings.max_gif_mb, settings.max_image_mb)} MB)" if ext == ".gif" else f"Image too large (max {settings.max_image_mb} MB)") if kind == "image" else f"Music is too large (max {settings.max_music_mb} MB)" if music else f"File too large (max {settings.max_media_mb} MB)")
                 if kind is None:  # tiny body
                     sniffed = sniff_upload(head)
                     if not sniffed:
@@ -519,9 +521,25 @@ def create_app(settings: Settings, guard: auth.LoginGuard | None = None, cloud: 
             with contextlib.suppress(OSError):
                 tmp.unlink(missing_ok=True)
             raise
+        shrunk = None
+        if kind == "image" and ext == ".gif" and size > image_cap:           # too big for a picture: make it smaller, but keep it animated
+            try:
+                shrunk = await asyncio.to_thread(gifshrink.shrink_file, final, int(image_cap * 0.97))
+            except gifshrink.GifError as e:
+                with contextlib.suppress(OSError):
+                    final.unlink(missing_ok=True)
+                raise HTTPException(413, f"{e} (Pictures can be at most {settings.max_image_mb} MB.)") from e
+            except Exception:
+                log.exception("could not shrink the GIF %s", final.name)
+                with contextlib.suppress(OSError):
+                    final.unlink(missing_ok=True)
+                raise HTTPException(400, "That GIF could not be processed. Try saving it again, or use a smaller one.") from None
         if cloud:
             cloud.push_upload(final)
-        return {"url": f"/uploads/{name}{ext}", "kind": kind}
+        out = {"url": f"/uploads/{name}{ext}", "kind": kind}
+        if shrunk:
+            out["shrunk"] = {"from": shrunk["from"], "to": shrunk["to"]}
+        return out
 
     @app.get("/uploads/{name}")
     async def serve_upload(name: str):

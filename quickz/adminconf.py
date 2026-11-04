@@ -22,6 +22,8 @@ SPECS: dict[str, dict] = {
                       "help": "Quizzes with more questions than this cannot be saved. Existing quizzes are not changed."},
     "max_image_mb": {"group": "uploads", "label": "Largest picture", "min": 1, "max": 5, "unit": "MB",
                      "help": "Pictures are shrunk in the browser first, so most are far smaller. Bigger limits use more storage and slow phones."},
+    "max_gif_mb": {"group": "uploads", "label": "Largest animated GIF to accept", "min": 3, "max": 50, "unit": "MB",
+                   "help": "A GIF bigger than the largest picture is shrunk automatically (smaller, fewer colours, fewer frames) to fit it. Bigger GIFs than this are refused."},
     "max_music_mb": {"group": "uploads", "label": "Largest lobby music file", "min": 1, "max": 20, "unit": "MB",
                      "help": "For the waiting-screen music (MP3, M4A, OGG or WAV)."},
     "max_media_mb": {"group": "uploads", "label": "Largest question audio or video", "min": 1, "max": 500, "unit": "MB",
@@ -43,7 +45,7 @@ DEFAULT_MAX_QUESTIONS = 200
 
 def defaults(settings, guard) -> dict:
     """What the server was started with: the value used when nothing has been changed here."""
-    return {"max_players": settings.max_players, "max_questions": DEFAULT_MAX_QUESTIONS, "max_image_mb": 2, "max_music_mb": 5, "max_media_mb": settings.max_media_mb,
+    return {"max_players": settings.max_players, "max_questions": DEFAULT_MAX_QUESTIONS, "max_image_mb": 2, "max_gif_mb": 25, "max_music_mb": 5, "max_media_mb": settings.max_media_mb,
             "session_days": settings.session_days, "password_min": DEFAULT_PASSWORD_MIN,
             "login_attempts": guard.user_limit if guard else 5, "login_lock_minutes": int((guard.lock if guard else 300) // 60)}
 
@@ -66,6 +68,7 @@ def apply(settings, guard, values: dict) -> None:
     questions.MAX_QUESTIONS = values["max_questions"]
     settings.max_image_mb = values["max_image_mb"]
     settings.max_music_mb = values["max_music_mb"]
+    settings.max_gif_mb = values["max_gif_mb"]
     settings.max_media_mb = values["max_media_mb"]
     settings.session_days = values["session_days"]
     auth.MIN_PASSWORD = values["password_min"]
