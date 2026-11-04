@@ -25,6 +25,7 @@ from fastapi.responses import RedirectResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import ai as ai_mod
+from . import aimage as aimage_mod
 from . import mcp as mcp_mod
 from . import auth
 from .cloud import CloudSync
@@ -534,10 +535,16 @@ def create_app(settings: Settings, guard: auth.LoginGuard | None = None, cloud: 
         st = db.ai_settings()
         order = ai_mod.provider_order(st, db.ai_providers(with_keys=True))
         used = db.ai_audit_count(user["id"], time.time() - 86400, ("ok", "partial", "error", "refused"))
-        return {"available": bool(st["enabled"] and order), "enabled": st["enabled"], "configured": bool(order),
+        used_pics = db.ai_audit_count(user["id"], time.time() - 86400, ("ok", "partial", "error", "refused"), "image")
+        pic_order = aimage_mod.image_order(st, db.ai_providers(with_keys=True))
+        images = {"enabled": st["images_enabled"], "available": bool(st["images_enabled"] and pic_order), "kinds": list(aimage_mod.PICTURE_KINDS),
+                  "styles": {k: v[0] for k, v in aimage_mod.STYLES.items()}, "remaining_today": max(0, st["images_per_user_day"] - used_pics),
+                  "can_suggest": bool(order)}
+        return {"images": images, "available": bool(st["enabled"] and order), "enabled": st["enabled"], "configured": bool(order),
                 "max_questions": st["max_questions"], "remaining_today": max(0, st["per_user_day"] - used),
                 "difficulties": ai_mod.DIFFICULTIES, "levels": ai_mod.LEVELS, "quiz_types": ai_mod.QUIZ_TYPES,
-                "question_types": ai_mod.QUESTION_TYPES, "age_groups": ai_mod.AGE_LABELS, "languages": ai_mod.LANGUAGES}
+                "question_types": ai_mod.QUESTION_TYPES, "age_groups": ai_mod.AGE_LABELS, "languages": ai_mod.LANGUAGES,
+                "tones": ai_mod.TONES}
 
     @app.post("/api/ai/generate")
     async def ai_generate(request: Request, user: dict = Depends(user_dep)):
@@ -556,6 +563,28 @@ def create_app(settings: Settings, guard: auth.LoginGuard | None = None, cloud: 
         except ai_mod.AIError as e:
             raise ApiError(e.http, e.message, e.status) from e
 
+    @app.post("/api/ai/image/idea")
+    async def ai_image_idea(request: Request, user: dict = Depends(user_dep)):
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return await aimage_mod.suggest_picture(db, vault, user, body, client_ip(request))
+        except ai_mod.AIError as e:
+            raise ApiError(e.http, e.message, e.status) from e
+
+    @app.post("/api/ai/image")
+    async def ai_image(request: Request, user: dict = Depends(user_dep)):
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return await aimage_mod.generate_image(db, vault, user, body, client_ip(request))
+        except ai_mod.AIError as e:
+            raise ApiError(e.http, e.message, e.status) from e
+
     @app.post("/api/ai/accept")
     async def ai_accept(request: Request, user: dict = Depends(user_dep)):
         """The host tells us how many drafted questions they added, so the audit log shows what was actually used."""
@@ -571,6 +600,8 @@ def create_app(settings: Settings, guard: auth.LoginGuard | None = None, cloud: 
         provs = db.ai_providers()
         return {"settings": st, "providers": [{"name": n, "label": spec["label"], "model_default": spec["model"], "key_url": spec["key_url"],
                                                "needs_account": bool(spec.get("needs_account")), "needs_base": bool(spec.get("needs_base")),
+                                               "image_capable": n in aimage_mod.IMAGE_SERVICES,
+                                               "image_model_default": aimage_mod.IMAGE_SERVICES.get(n, {}).get("model", ""),
                                                **provs[n]} for n, spec in ai_mod.PROVIDERS.items()],
                 "stats_day": db.ai_stats(now - 86400), "stats_week": db.ai_stats(now - 7 * 86400),
                 "builtin_blocked": len(ai_mod.BLOCKED_TERMS)}
@@ -589,10 +620,12 @@ def create_app(settings: Settings, guard: auth.LoginGuard | None = None, cloud: 
             if k not in body:
                 continue
             v = body[k]
-            if k in ("enabled", "fallback", "mcp_enabled"):
+            if k in ("enabled", "fallback", "mcp_enabled", "images_enabled"):
                 v = bool(v)
             elif k == "active_provider":
                 v = v if v in ai_mod.PROVIDERS else ""
+            elif k == "images_provider":
+                v = v if v in aimage_mod.IMAGE_SERVICES else ""
             elif k == "blocked_terms":
                 v = "\n".join(ai_mod.clean_line(t, 60) for t in str(v).splitlines() if t.strip())[:4000]
             else:
@@ -620,7 +653,7 @@ def create_app(settings: Settings, guard: auth.LoginGuard | None = None, cloud: 
         if "enabled" in body:
             fields["enabled"] = int(bool(body["enabled"]))
             notes.append("enabled" if body["enabled"] else "disabled")
-        for k, lim in (("model", 100), ("base_url", 200), ("account_id", 64)):
+        for k, lim in (("model", 100), ("image_model", 100), ("base_url", 200), ("account_id", 64)):
             if k in body:
                 fields[k] = ai_mod.clean_line(body[k], lim)
                 notes.append(f"{k} set")
@@ -650,10 +683,13 @@ def create_app(settings: Settings, guard: auth.LoginGuard | None = None, cloud: 
         cfg = db.ai_providers(with_keys=True)[name]
         if not cfg["has_key"]:
             raise ApiError(400, "Save an API key first.", "no_key")
+        purpose = "image" if request.query_params.get("purpose") == "image" else "text"
+        if purpose == "image" and name not in aimage_mod.IMAGE_SERVICES:
+            raise ApiError(400, "This service cannot draw pictures.", "bad_request")
         t0 = time.time()
         row = {"user_id": admin["id"], "username": admin["username"], "action": "models", "provider": name, "model": "", "ip": client_ip(request)}
         try:
-            models = await asyncio.to_thread(ai_mod.list_models, name, cfg, vault.open(cfg["key_enc"]), db.ai_settings()["timeout_s"])
+            models = await asyncio.to_thread(ai_mod.list_models, name, cfg, vault.open(cfg["key_enc"]), db.ai_settings()["timeout_s"], purpose)
             row.update(status="ok", message=f"{len(models)} models listed.")
         except ai_mod.AIError as e:
             row.update(status=e.status, message=e.message)
@@ -662,7 +698,7 @@ def create_app(settings: Settings, guard: auth.LoginGuard | None = None, cloud: 
             raise ApiError(502, e.message, "models_failed")
         row["latency_ms"] = int((time.time() - t0) * 1000)
         db.ai_audit_add(row)
-        return {"models": models, "current": cfg["model"] or ai_mod.PROVIDERS[name]["model"]}
+        return {"models": models, "current": (cfg["image_model"] or aimage_mod.IMAGE_SERVICES[name]["model"]) if purpose == "image" else (cfg["model"] or ai_mod.PROVIDERS[name]["model"])}
 
     @app.post("/api/admin/ai/providers/{name}/test")
     async def ai_admin_test(name: str, request: Request, admin: dict = Depends(admin_dep)):

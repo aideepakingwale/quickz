@@ -1,5 +1,6 @@
 """SQLite persistence (single connection guarded by a lock; fine for a LAN event)."""
 
+import hashlib
 import json
 import sqlite3
 import threading
@@ -133,7 +134,14 @@ CREATE TABLE IF NOT EXISTS ai_audit(
   latency_ms INTEGER NOT NULL DEFAULT 0,
   ip TEXT NOT NULL DEFAULT '',
   flags TEXT NOT NULL DEFAULT '{}',
-  response TEXT NOT NULL DEFAULT ''
+  response TEXT NOT NULL DEFAULT '',
+  request TEXT NOT NULL DEFAULT '{}'
+);
+CREATE TABLE IF NOT EXISTS ai_prompts(
+  sha TEXT PRIMARY KEY,
+  version TEXT NOT NULL DEFAULT '',
+  text TEXT NOT NULL,
+  first_seen REAL NOT NULL
 );
 CREATE TABLE IF NOT EXISTS api_tokens(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -185,6 +193,12 @@ class Database:
         cols = {r[1] for r in self._conn.execute("PRAGMA table_info(players)")}
         if "avatar" not in cols:  # databases created by the first MVP
             self._conn.execute("ALTER TABLE players ADD COLUMN avatar TEXT NOT NULL DEFAULT ''")
+            self._conn.commit()
+        if "image_model" not in {r[1] for r in self._conn.execute("PRAGMA table_info(ai_providers)")}:   # AI pictures, added later
+            self._conn.execute("ALTER TABLE ai_providers ADD COLUMN image_model TEXT NOT NULL DEFAULT ''")
+            self._conn.commit()
+        if "request" not in {r[1] for r in self._conn.execute("PRAGMA table_info(ai_audit)")}:   # the exact prompt, added later
+            self._conn.execute("ALTER TABLE ai_audit ADD COLUMN request TEXT NOT NULL DEFAULT '{}'")
             self._conn.commit()
         self._upgrade_rich_text()
         if "submitted_at" not in {r[1] for r in self._conn.execute("PRAGMA table_info(answers)")}:
@@ -516,7 +530,7 @@ class Database:
         for name in PROVIDERS:
             r = rows.get(name, {})
             cfg = {"enabled": bool(r.get("enabled")), "has_key": bool(r.get("key_enc")), "key_hint": r.get("key_hint", ""),
-                   "model": r.get("model", ""), "base_url": r.get("base_url", ""), "account_id": r.get("account_id", ""),
+                   "model": r.get("model", ""), "image_model": r.get("image_model", ""), "base_url": r.get("base_url", ""), "account_id": r.get("account_id", ""),
                    "priority": r.get("priority", 50), "updated_at": r.get("updated_at", 0), "updated_by": r.get("updated_by", "")}
             if with_keys:
                 cfg["key_enc"] = r.get("key_enc", "")
@@ -529,13 +543,19 @@ class Database:
         self._run(f"UPDATE ai_providers SET {sets} WHERE name=?", (*fields.values(), time.time(), updated_by, name))
 
     def ai_audit_add(self, row: dict) -> int:
+        request = dict(row.get("request") or {})
+        system = request.pop("system", None)          # the fixed system prompt is stored once, not once per request
+        if system:
+            sha = hashlib.sha256(system.encode()).hexdigest()[:16]
+            self._run("INSERT OR IGNORE INTO ai_prompts(sha,version,text,first_seen) VALUES(?,?,?,?)", (sha, str(request.get("prompt_version", "")), system, time.time()))
+            request["system_sha"] = sha
         cur = self._run(
             """INSERT INTO ai_audit(ts,user_id,username,action,status,provider,model,params,message,requested,returned,
-                                    tokens_in,tokens_out,latency_ms,ip,flags,response) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                                    tokens_in,tokens_out,latency_ms,ip,flags,response,request) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (time.time(), row.get("user_id"), row.get("username", ""), row["action"], row["status"], row.get("provider", ""),
              row.get("model", ""), json.dumps(row.get("params") or {}), str(row.get("message", ""))[:1000], row.get("requested", 0),
              row.get("returned", 0), row.get("tokens_in", 0), row.get("tokens_out", 0), row.get("latency_ms", 0), row.get("ip", ""),
-             json.dumps(row.get("flags") or {}), row.get("response", "")))
+             json.dumps(row.get("flags") or {}), row.get("response", ""), json.dumps(request)))
         return cur.lastrowid
 
     def ai_audit_count(self, user_id, since: float, statuses: tuple, action: str = "generate") -> int:
@@ -547,7 +567,7 @@ class Database:
         return self._one(f"SELECT COUNT(*) n FROM ai_audit WHERE {where}", tuple(args))["n"]
 
     def ai_audit_accept(self, audit_id: int, user_id: int, count: int) -> bool:
-        cur = self._run("UPDATE ai_audit SET accepted=MIN(returned, accepted+?) WHERE id=? AND user_id=? AND action='generate'",
+        cur = self._run("UPDATE ai_audit SET accepted=MIN(returned, accepted+?) WHERE id=? AND user_id=? AND action IN ('generate','image')",
                         (max(0, count), audit_id, user_id))
         return cur.rowcount > 0
 
@@ -568,7 +588,11 @@ class Database:
     def ai_audit_one(self, audit_id: int):
         r = self._one("SELECT * FROM ai_audit WHERE id=?", (audit_id,))
         if r:
-            r["params"], r["flags"] = json.loads(r["params"]), json.loads(r["flags"])
+            r["params"], r["flags"], r["request"] = json.loads(r["params"]), json.loads(r["flags"]), json.loads(r.get("request") or "{}")
+            sha = r["request"].get("system_sha")
+            if sha:
+                prompt = self._one("SELECT text FROM ai_prompts WHERE sha=?", (sha,))
+                r["request"]["system"] = prompt["text"] if prompt else ""
         return r
 
     def ai_stats(self, since: float) -> dict:

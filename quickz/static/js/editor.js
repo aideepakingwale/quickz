@@ -127,7 +127,7 @@ async function renderEditor(id) {
       el('div', { class: 'add-row' },
         el('button', { class: 'btn primary', type: 'button', onclick: addDialog }, icon('plus'), 'Add question'),
         el('button', { class: 'btn', type: 'button', onclick: pasteDialog }, icon('upload'), 'Paste questions'),
-        el('button', { class: 'btn ai-btn', type: 'button', onclick: () => aiDialog({ onAdd: addAIQuestions }) }, icon('sparkle'), 'Draft with AI')));
+        el('button', { class: 'btn ai-btn', type: 'button', onclick: () => aiDialog({ onAdd: addAIQuestions, context: () => ({ quiz_title: quiz.title, existing: quiz.questions.map(x => plainText(x.text)) }) }) }, icon('sparkle'), 'Draft with AI')));
   }
   function addQuestion(kind) {
     const q = newQuestion(kind); quiz.questions.push(q); sel = q.id; touch(); drawAll();

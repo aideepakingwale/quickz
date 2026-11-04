@@ -287,7 +287,8 @@ function questionForm(q, h) {
         el('button', { type: 'button', role: 'radio', 'aria-pressed': String((q.image_effect || 'none') === v), onclick: () => { q.image_effect = v; h.change(); h.rebuild(); } }, l))),
       el('span', { class: 'hint' }, q.image_effect === 'blur' ? 'A “guess the picture” round: it starts blurred and sharpens as time runs out, so quick guesses earn more with speed weighting on.'
         : q.image_effect === 'zoom' ? 'Starts zoomed in on a detail and zooms out as time runs out. Great for “what is this?”.' : 'Shown clearly the whole time.')) : null;
-    picBox.replaceChildren(...[field, fx].filter(Boolean));
+    const ai = typeof aiPictureButton === 'function' ? aiPictureButton(q, kind, url => { q.image = url; q.image_effect = q.image_effect || 'none'; h.change(); h.rebuild(); }) : null;
+    picBox.replaceChildren(...[field, ai, fx].filter(Boolean));
   };
   drawPic();
   root.append(el('div', { class: 'field' }, el('label', {}, kind === 'pin' ? 'Picture to point at' : kind === 'jigsaw' ? 'Picture to cut up' : 'Picture (optional)'), picBox));

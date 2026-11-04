@@ -4,18 +4,23 @@ Hosts can ask a free AI service to draft quiz questions. The Super Admin chooses
 
 ## For hosts
 
-In the quiz editor choose **Draft with AI**. Fill in:
+In the quiz editor choose **Draft with AI** (or the same button in the live "Add a question now" drawer, which drafts one question). The dialog has three short steps and a live sentence at the bottom that says exactly what you are asking for. Your last choices are remembered.
 
-| Field | Choices |
+| Step | What you set |
 | --- | --- |
-| Topic | Free text, up to 200 characters. Describe the subject in words. |
-| Quiz type | General knowledge, classroom or revision, trivia night, team building, workplace training, family and friends, community event |
-| Question type | A mix, single choice, true or false, several answers, typed answer, number, order, match pairs |
-| Difficulty | Easy, medium, hard |
-| Audience knowledge level | Beginner, intermediate, advanced |
-| Audience age group | 5 to 7, 8 to 10, 11 to 13, 14 to 17, adults, mixed ages |
-| How many | 1 up to the admin's limit (default 10) |
-| Language | English and nine others |
+| 1. What is it about? | **Topic** (up to 200 characters, with example topics to click) and optional **focus or context**, such as "based on chapter 3 of our handbook, skip anything about pricing" (up to 500 characters) |
+| 2. Who is it for? | Age group (5 to 7, 8 to 10, 11 to 13, 14 to 17, adults, mixed), knowledge of the topic (beginner, intermediate, advanced), language |
+| 3. What should it ask? | Question type, difficulty, how many, and under **Style options**: tone (friendly, playful, formal), quiz setting, and whether to include a one-line explanation |
+
+When you open the dialog from a quiz, **Use this quiz as context** is on. The AI is shown the quiz title and up to 40 of its latest questions so it does not repeat them and can match their style.
+
+On the review screen each draft is a card with the correct answers marked. Things to know:
+
+- A draft the AI was not fully sure about carries a **Please check this one** note saying what to verify.
+- **Replace with** on a card asks for a new version of that one question: easier, harder, a different fact, or simpler words.
+- **Draft more like these** adds more cards without repeating the ones you already have.
+- **What was sent to the AI** shows the exact brief. Nothing about players is ever included.
+- Untick any you do not want and choose **Add**. Nothing is added until you do.
 
 The options are built to suit the question type you pick, and the server checks that what comes back really is that type:
 
@@ -64,9 +69,23 @@ Always on:
 
 Set by the Super Admin: master switch, requests per host per day and per minute, requests for everyone per day, most questions per request, wait time, extra blocked words, how long the audit log is kept.
 
+## AI pictures
+
+A host can create **one illustration for one question**. In the quiz editor, under the question's picture, choose **Create a picture with AI**. It is offered for single choice, multiple answers, true or false, poll, typed answer, number, order, match, buzzer and slide questions. It is greyed out for **pin** and **jigsaw** questions, where the picture is the puzzle and has to be real.
+
+1. The AI reads your question and suggests a scene, or tells you a real picture would be better (for example for flags, maps, landmarks, famous people or diagrams, which an AI can draw wrongly). You can edit the description or press **Suggest an idea** again.
+2. Choose a style (flat illustration, friendly cartoon, watercolour, pencil sketch) and the audience's age, then **Create picture**.
+3. The picture appears as a preview. **Try again** draws another (it counts toward the limit). **Use this picture** uploads it like any picture you add yourself, and it is backed up with the rest. Until then nothing is stored.
+
+Safety: the description is checked like a topic and always wrapped in fixed rules (no text, logos, real or famous people, weapons or anything frightening, and the stricter word list for younger audiences). The picture must really be a PNG, JPEG or WebP. Only the description is sent to the service; no player information is.
+
+For the Super Admin, the AI page has an **AI pictures** card. It is off by default. Pictures use the keys already saved for **Google Gemini** (default model `gemini-2.5-flash-image`) and **Cloudflare** (default `@cf/black-forest-labs/flux-1-schnell`), or a **custom** service that follows the OpenAI images API and returns base64. Groq and OpenRouter's free text models cannot draw. Choose which service draws first, load its list of picture models, and set the limits (defaults: 20 pictures per host per day, 3 per minute, 100 for everyone per day). The text fallback setting also applies. Free tiers may use prompts and pictures to improve their products, so check each provider's terms, including who owns the pictures.
+
+Every picture request is audited as **Picture**, and every idea request as **Picture idea**. An entry shows the description, style, the exact prompt sent (with the fixed rules), each service tried with its result and time, the picture's size and SHA-256 fingerprint, and whether the host used it. The picture itself is not copied into the log.
+
 ## Audit log
 
-Every request is recorded, including blocked and rate-limited ones, plus key tests and every change to AI settings. Each entry has the time, user, address, service and model, the exact choices and topic, how many questions were asked for, returned and finally added by the host, tokens, time taken, and notes on anything discarded. Open an entry to see the raw reply from the service before the safety checks. Filter by result, action, user and date, and export to CSV. Entries older than the retention period (default 180 days) are deleted automatically. Settings changes never include key values.
+Every request is recorded, including blocked and rate-limited ones, plus key tests and every change to AI settings. Each entry has the time, user, address, service and model, the exact choices, topic and focus text, how many questions were asked for, returned and finally added by the host, tokens, time taken, and notes on anything discarded. Open an entry to see five tabs: **Overview**, **Prompt** (the exact brief that was sent, the fixed system prompt, prompt version, temperature and token limit, with copy buttons), **Reply** (the raw reply before the safety checks), **Drafts** (what was kept, marked "check", or discarded) and **Attempts** (each service tried, with its result, time and tokens). The context used is recorded too: the quiz title, how many existing questions were sent, and any "replace this draft" request. The fixed system prompt is stored once and shared by all entries. Filter by result, action, user and date, and export to CSV. Entries older than the retention period (default 180 days) are deleted automatically. Settings changes never include key values.
 
 ## Where the key is kept
 
@@ -74,8 +93,11 @@ API keys are encrypted with a master key taken from `QUICKZ_SECRET_KEY` if set, 
 
 ## For developers
 
+- `quickz/aimage.py`: AI pictures (question kinds allowed, safety template, each service's call, idea step, limits, audit).
 - `quickz/ai.py`: request checks, prompt, provider calls, reply checks, the whole flow (`generate`).
-- `quickz/db.py`: tables `ai_providers`, `ai_settings`, `ai_audit`.
+- `quickz/db.py`: tables `ai_providers` (with `image_model`), `ai_settings`, `ai_audit`, `ai_prompts` (the fixed system prompt, stored once).
+- Prompt design: `ai.SYSTEM_PROMPT` never changes between requests (difficulty, level, age and tone rubrics, option-quality rules, a plan, write, check, rate process, safety rules). `ai.build_prompt` writes the per-request brief with one worked example per requested type. Change the wording by editing those and bumping `ai.PROMPT_VERSION`, which is recorded in every audit entry.
 - `quickz/server.py`: `/api/ai/*` for hosts, `/api/admin/ai/*` for the Super Admin.
 - `quickz/static/js/ai.js`: the editor dialog and the admin page.
+- `tests/test_aimage.py`: pictures, with a fake picture service.
 - `tests/test_ai.py`: the network call is replaced by a fake, so the tests need no key or internet.

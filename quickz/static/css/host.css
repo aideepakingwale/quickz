@@ -464,3 +464,50 @@ input::-ms-reveal, input::-ms-clear { display: none; }
 .ai-always { margin-top: 1rem; font-size: .92rem; } .ai-always summary { cursor: pointer; font-weight: 600; } .ai-always ul { margin: .5rem 0 0; padding-left: 1.2rem; display: flex; flex-direction: column; gap: .3rem; }
 .ai-kv { display: grid; grid-template-columns: 11rem 1fr; gap: .5rem; padding: .25rem 0; border-bottom: 1px solid var(--border); font-size: .92rem; word-break: break-word; }
 .ai-raw { max-height: 14rem; overflow: auto; padding: .7rem; margin: 0; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-md); white-space: pre-wrap; font-size: .8rem; }
+
+/* AI drafting dialog (v2) */
+.aiw { display: flex; flex-direction: column; gap: 1.1rem; }
+.aiw-lead { margin: 0; }
+.aiw-sec { display: flex; flex-direction: column; gap: .8rem; padding: 1rem 1.1rem; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface); }
+.aiw-sec h3 { margin: 0; font-size: 1rem; }
+.aiw-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: .8rem 1.2rem; align-items: start; }
+.aiw-topic { font-size: 1.05rem; min-height: 48px; }
+.aiw-ideas { display: flex; flex-wrap: wrap; gap: .35rem; align-items: center; margin-top: .45rem; }
+.aiw-idea { border: 1px dashed var(--border-strong); background: transparent; border-radius: var(--r-pill); padding: .2rem .7rem; font-size: .8rem; cursor: pointer; color: var(--text-muted); }
+.aiw-idea:hover, .aiw-idea:focus-visible { border-style: solid; color: var(--text); background: var(--surface-2); }
+.aiw-more > summary { cursor: pointer; font-weight: 600; font-size: .92rem; padding: .25rem 0; }
+.aiw-more[open] > summary { margin-bottom: .5rem; }
+.aiw-step { display: inline-flex; align-items: center; gap: .6rem; }
+.aiw-step output { min-width: 2ch; text-align: center; font-weight: 800; font-size: 1.15rem; }
+.aiw-step .btn { min-width: 40px; min-height: 40px; font-size: 1.1rem; }
+.aiw-ctx { padding: .7rem .9rem; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface-2); }
+.aiw-summary { display: flex; gap: .7rem; align-items: flex-start; padding: .8rem 1rem; border-radius: var(--r-md); background: color-mix(in srgb, var(--brand) 9%, var(--surface)); border: 1px solid color-mix(in srgb, var(--brand) 30%, transparent); font-size: .95rem; position: sticky; bottom: 0; }
+.aiw-summary .icon { color: var(--brand); flex: none; margin-top: .15rem; }
+.aiw-err { border-color: var(--danger); }
+.aiw-wait { display: flex; flex-direction: column; align-items: center; text-align: center; gap: .6rem; padding: 1.6rem 1rem 1rem; }
+.aiw-wait-t { font-size: 1.2rem; font-weight: 700; }
+.aiw-skel { display: flex; flex-direction: column; gap: .6rem; width: 100%; margin-top: 1rem; }
+.aiw-skel-c { height: 4.2rem; border-radius: var(--r-md); background: linear-gradient(90deg, var(--surface-2), var(--surface-3), var(--surface-2)); background-size: 200% 100%; animation: aiw-shimmer 1.4s linear infinite; }
+@keyframes aiw-shimmer { to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) { .aiw-skel-c { animation: none; } }
+.aiw-top { display: flex; gap: .8rem; align-items: center; flex-wrap: wrap; }
+.aiw-cards { display: flex; flex-direction: column; gap: .7rem; max-height: 52vh; overflow: auto; padding: .15rem; }
+.aiw-card { padding: .8rem 1rem; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface); display: flex; flex-direction: column; gap: .45rem; }
+.aiw-card.off { opacity: .55; border-style: dashed; }
+.aiw-card.busy { opacity: .5; pointer-events: none; }
+.aiw-card-h { display: flex; gap: .4rem; align-items: center; flex-wrap: wrap; }
+.aiw-pick { display: inline-flex; gap: .5rem; align-items: center; font-weight: 700; font-size: .88rem; cursor: pointer; }
+.aiw-pick input { width: 1.25em; height: 1.25em; }
+.aiw-card .ai-q { margin: 0; font-size: 1.02rem; }
+.aiw-check { display: flex; gap: .5rem; align-items: flex-start; padding: .5rem .7rem; border-radius: var(--r-sm); background: var(--warn-bg); color: var(--text); font-size: .88rem; border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent); }
+.aiw-check .icon { color: var(--warn); flex: none; margin-top: .1rem; }
+.aiw-card-f { display: flex; gap: .3rem; align-items: center; flex-wrap: wrap; padding-top: .35rem; border-top: 1px solid var(--border); font-size: .82rem; }
+.ai-raw.tall { max-height: 20rem; }
+
+/* AI picture dialog */
+.aipic-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1.2rem; align-items: start; }
+@media (max-width: 720px) { .aipic-grid { grid-template-columns: 1fr; } }
+.aipic-prev { aspect-ratio: 4 / 3; border: 1.5px dashed var(--border-strong); border-radius: var(--r-md); background: var(--surface-2); display: grid; place-items: center; overflow: hidden; }
+.aipic-prev.has { border-style: solid; background: var(--surface); }
+.aipic-prev img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.aipic-empty, .aipic-wait { display: flex; flex-direction: column; align-items: center; gap: .5rem; text-align: center; padding: 1rem; }
