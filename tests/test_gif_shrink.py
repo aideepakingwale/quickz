@@ -138,3 +138,50 @@ def test_transparency_is_flattened_onto_white_and_a_static_gif_still_works():
     out = Image.open(io.BytesIO(result["bytes"])).convert("RGB")
     assert out.getpixel((2, 2)) == (255, 255, 255) and out.getpixel((100, 90))[0] > 150 and out.getpixel((100, 90))[1] < 100
     assert result["frames"] == 1
+
+
+def test_a_heavy_gif_is_shrunk_quickly_and_a_runaway_one_is_stopped(monkeypatch):
+    import time
+    heavy = make_gif(frames=60, w=800, h=600, noise=30000, seed=4)
+    started = time.monotonic()
+    result = gifshrink.shrink(heavy, 2 * 1024 * 1024)
+    assert len(result["bytes"]) <= 2 * 1024 * 1024 and time.monotonic() - started < 15
+    monkeypatch.setattr(gifshrink, "MAX_SECONDS", 0.0)
+    with pytest.raises(gifshrink.GifError, match="took too long"):
+        gifshrink.shrink(heavy, 2 * 1024 * 1024)
+
+
+def test_the_estimate_is_accurate_and_chooses_the_gentlest_setting_that_fits():
+    data = make_gif(frames=20, w=400, h=300, noise=8000, seed=6)
+    trace = []
+    slightly_big = gifshrink.shrink(data, int(len(data) * 0.95), trace=trace)
+    assert slightly_big["frames"] == 20 and slightly_big["size"] == (400, 300) and slightly_big["step"] <= 3       # only colours change: no frames dropped, no smaller picture
+    estimate = next(v for i, k, v in trace if i == slightly_big["step"] and k == "estimate")
+    real = next(v for i, k, v in trace if i == slightly_big["step"] and k == "real")
+    assert abs(estimate - real) / real < 0.12                                                                      # the guess matches what really came out
+    much_bigger = gifshrink.shrink(data, int(len(data) * 0.6))
+    assert much_bigger["frames"] == 10 and much_bigger["size"] == (400, 300)                                       # half the frames at full size is enough here
+
+
+def test_a_gif_never_comes_out_bigger_than_it_went_in_when_it_already_fits(admin):
+    small = make_gif(frames=10, w=300, h=200, noise=300, seed=8)
+    stored = admin.get(admin.post("/api/uploads", content=small).json()["url"]).content
+    assert stored == small
+
+
+def test_only_one_gif_is_shrunk_at_a_time_and_a_busy_server_says_so(admin, monkeypatch, big_gif):
+    import asyncio
+    from quickz import server as server_mod
+    waits = []
+    real = asyncio.wait_for
+
+    async def fake_wait_for(aw, timeout):                                       # the lock never frees up: the 20 second wait runs out at once
+        aw.close() if hasattr(aw, "close") else None
+        waits.append(timeout)
+        raise asyncio.TimeoutError()
+
+    monkeypatch.setattr(server_mod.asyncio, "wait_for", fake_wait_for)
+    r = admin.post("/api/uploads", content=big_gif)
+    assert r.status_code == 503 and "busy shrinking another GIF" in r.text and waits == [20]
+    monkeypatch.setattr(server_mod.asyncio, "wait_for", real)
+    assert admin.post("/api/uploads", content=big_gif).status_code == 200      # and nothing is left stuck afterwards

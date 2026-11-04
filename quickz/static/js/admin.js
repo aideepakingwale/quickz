@@ -50,6 +50,7 @@ async function renderAdminSettings() {
           } }, 'Reset') : null));
     };
     formBox.replaceChildren(el('div', { class: 'card' },
+      conf.features && !conf.features.gif_shrink ? el('div', { class: 'ai-note', role: 'status', style: { marginBottom: '1rem' } }, icon('warn'), el('div', {}, el('b', {}, 'GIF shrinking is not installed on this server. '), 'Animated GIFs bigger than the largest picture are refused instead of shrunk. Install the Pillow library (it is in requirements-prod.txt) and restart.')) : null,
       ...conf.groups.map(g => el('section', { class: 'conf-group' }, el('h3', {}, g.label), conf.settings.filter(s => s.group === g.id).map(row))),
       el('div', { class: 'row', style: { justifyContent: 'space-between', marginTop: '1rem' } }, el('span', { class: 'faint' }, 'Changes apply straight away and are kept when the server restarts.'),
         el('div', { class: 'row', style: { gap: '.5rem' } },

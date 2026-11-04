@@ -23,7 +23,9 @@ A changed setting shows a **Changed** tag and a **Reset** link that goes back to
 
 ## Animated GIFs
 
-A GIF that fits the picture limit is stored exactly as uploaded. A bigger one (up to the GIF limit above) is shrunk by the server and stays animated: first a smaller picture and fewer colours, then fewer frames if it is still too big (the time of dropped frames is added to the rest, so the speed is the same). The host sees how much it was shrunk. Transparent areas become white. A GIF that cannot be brought under the limit, or is extremely large or long, is refused with a clear message and nothing is stored. This needs the Pillow library, which is in `requirements-prod.txt`; without it big GIFs are refused rather than shrunk.
+A GIF that fits the picture limit is stored exactly as uploaded. A bigger one (up to the GIF limit above) is shrunk by the server and stays animated. The server looks at a few sample frames, measures what each setting would give, and picks the gentlest one that fits: fewer colours first, then every other frame (the time of dropped frames is added to the rest, so the speed is the same), then a smaller picture. The whole animation shares one colour palette, so parts that do not move stay identical from frame to frame and the file stays small. The host sees how much it was shrunk. Transparent areas become white.
+
+It is built for a small server: frames are read one at a time (a 100-frame, 800 px GIF needs about 60 MB, not hundreds), only one GIF is shrunk at a time (the next waits up to 20 seconds, then is asked to try again), and a GIF that is extremely large or long, takes more than 25 seconds, or cannot be brought under the limit is refused with a clear message and nothing is stored. It needs the Pillow library (in `requirements-prod.txt`). If it is missing, the Settings page shows a warning and big GIFs are refused rather than shrunk.
 
 ## Clean up quizzes
 

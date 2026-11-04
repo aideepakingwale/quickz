@@ -205,3 +205,12 @@ def test_the_recent_changes_list_shows_settings_and_clean_ups_together(admin):
     admin.post("/api/admin/quizzes/delete", json={"ids": [qid]})
     messages = [c["message"] for c in admin.get("/api/admin/settings").json()["changes"]]
     assert messages[0].startswith("Deleted 1 quiz") and messages[1].startswith("Changed stay signed in for")
+
+
+def test_the_settings_page_says_whether_gif_shrinking_is_installed(admin, monkeypatch):
+    from quickz import gifshrink
+    assert admin.get("/api/admin/settings").json()["features"] == {"gif_shrink": True}
+    monkeypatch.setattr(gifshrink, "HAVE_PILLOW", False)
+    assert admin.get("/api/admin/settings").json()["features"] == {"gif_shrink": False}
+    r = admin.post("/api/uploads", content=b"GIF89a" + b"\x00" * (3 * 1024 * 1024))
+    assert r.status_code == 413 and "cannot shrink GIFs" in r.text                      # a clear message instead of a crash

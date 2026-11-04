@@ -137,6 +137,7 @@ async function uploadImage(file, maxDim = 1100) {
   if (file.type === 'image/gif') {                              // a big animated GIF is shrunk by the server, so it only has to be under the larger GIF limit
     if (small.size > gifMB * 1048576) throw new Error(`This GIF is ${(small.size / 1048576).toFixed(1)} MB. GIFs up to ${gifMB} MB are shrunk automatically to fit the ${pictureMB()} MB picture limit; this one is too big. Use a shorter or smaller GIF.`);
   } else if (small.size > pictureMB() * 1048576) throw new Error(`This picture is ${(small.size / 1048576).toFixed(1)} MB, and pictures can be at most ${pictureMB()} MB. Choose a smaller one, or save it as JPEG or WebP.`);
+  if (file.type === 'image/gif' && small.size > pictureMB() * 1048576) ui.toast('Shrinking your GIF to fit. This can take a few seconds…', 'info', 6000);
   const r = await api('/api/uploads', { method: 'POST', raw: small });
   if (r.shrunk) ui.toast(`Your GIF was ${(r.shrunk.from / 1048576).toFixed(1)} MB, so it was shrunk to ${(r.shrunk.to / 1048576).toFixed(1)} MB (smaller, fewer colours or fewer frames) to fit the ${pictureMB()} MB limit. It still animates.`, 'success', 7000);
   return r.url;

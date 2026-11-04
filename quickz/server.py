@@ -122,6 +122,9 @@ def create_app(settings: Settings, guard: auth.LoginGuard | None = None, cloud: 
     db.purge_sessions()
     guard = guard or auth.LoginGuard()
     conf_defaults = adminconf_mod.defaults(settings, guard)       # what this server was started with
+    if not gifshrink.HAVE_PILLOW:
+        log.warning("Pillow is not installed: animated GIFs over the picture limit will be refused instead of shrunk")
+    gif_slot = asyncio.Semaphore(1)                               # one GIF is shrunk at a time, so a small server is never asked for much memory at once
 
     def conf_effective() -> dict:
         eff = dict(conf_defaults)
@@ -524,7 +527,18 @@ def create_app(settings: Settings, guard: auth.LoginGuard | None = None, cloud: 
         shrunk = None
         if kind == "image" and ext == ".gif" and size > image_cap:           # too big for a picture: make it smaller, but keep it animated
             try:
-                shrunk = await asyncio.to_thread(gifshrink.shrink_file, final, int(image_cap * 0.97))
+                try:
+                    await asyncio.wait_for(gif_slot.acquire(), timeout=20)
+                except asyncio.TimeoutError:
+                    raise HTTPException(503, "The server is busy shrinking another GIF. Try again in a moment.") from None
+                try:
+                    shrunk = await asyncio.to_thread(gifshrink.shrink_file, final, int(image_cap * 0.97))
+                finally:
+                    gif_slot.release()
+            except HTTPException:
+                with contextlib.suppress(OSError):
+                    final.unlink(missing_ok=True)
+                raise
             except gifshrink.GifError as e:
                 with contextlib.suppress(OSError):
                     final.unlink(missing_ok=True)
@@ -797,7 +811,7 @@ def create_app(settings: Settings, guard: auth.LoginGuard | None = None, cloud: 
         groups = [{"id": g, "label": label} for g, label in adminconf_mod.GROUPS]
         specs = [{"key": k, **spec, "default": conf_defaults[k], "value": eff[k], "changed": eff[k] != conf_defaults[k]} for k, spec in adminconf_mod.SPECS.items()]
         changes = sorted(db.ai_audit_list(action="settings", limit=8)["rows"] + db.ai_audit_list(action="cleanup", limit=8)["rows"], key=lambda r: -r["ts"])[:8]
-        return {"groups": groups, "settings": specs, "changes": [{"ts": r["ts"], "username": r["username"], "message": r["message"]} for r in changes]}
+        return {"groups": groups, "settings": specs, "features": {"gif_shrink": gifshrink.HAVE_PILLOW}, "changes": [{"ts": r["ts"], "username": r["username"], "message": r["message"]} for r in changes]}
 
     @app.get("/api/admin/settings")
     async def admin_settings_get(admin: dict = Depends(admin_dep)):
