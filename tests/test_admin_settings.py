@@ -214,3 +214,82 @@ def test_the_settings_page_says_whether_gif_shrinking_is_installed(admin, monkey
     assert admin.get("/api/admin/settings").json()["features"] == {"gif_shrink": False}
     r = admin.post("/api/uploads", content=b"GIF89a" + b"\x00" * (3 * 1024 * 1024))
     assert r.status_code == 413 and "cannot shrink GIFs" in r.text                      # a clear message instead of a crash
+
+
+# ---- clean-up: old games ---------------------------------------------------------------------------------------------------
+
+def make_old_game(app, title, code, status="finished", hours_old=24 * 40, players=2, answers=3):
+    db = app.state.db
+    gid = db.create_game(code, None, title, "", {}, [], 1)
+    created = time.time() - hours_old * 3600
+    db._run("UPDATE games SET status=?, created_at=?, finished_at=? WHERE id=?", (status, created, created + 600 if status == "finished" else None, gid))
+    pids = []
+    for i in range(players):
+        db._run("INSERT INTO players(game_id, token, nickname, email, joined_at) VALUES(?,?,?,?,?)", (gid, f"tok-{code}-{i}", f"Player {i}", f"p{i}@example.com", created))
+        pids.append(db._one("SELECT id FROM players WHERE token=?", (f"tok-{code}-{i}",))["id"])
+    for k in range(answers):
+        db._run("INSERT INTO answers(game_id, player_id, qid, qindex, choice, correct, points, elapsed_ms, submitted_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                (gid, pids[k % len(pids)], f"q{k}", k, "a", 1, 100, 500, created))
+    return gid
+
+
+def test_only_the_super_admin_can_see_or_delete_games(app, admin):
+    _, hana = host_session(app, admin, "hana")
+    gid = make_old_game(app, "Old", "11111")
+    assert hana.get("/api/admin/games").status_code == 403
+    assert hana.post("/api/admin/games/delete", json={"ids": [gid], "confirm": True}).status_code == 403
+    assert app.state.db.get_game(gid) is not None
+
+
+def test_the_admin_sees_every_game_with_its_size_and_why_some_cannot_go_yet(app, admin):
+    old = make_old_game(app, "Finished long ago", "11111", players=3, answers=6)
+    fresh = make_old_game(app, "Open lobby", "22222", status="open", hours_old=1, players=1, answers=0)
+    stale = make_old_game(app, "Abandoned lobby", "33333", status="open", hours_old=30, players=0, answers=0)
+    rows = {r["code"]: r for r in admin.get("/api/admin/games").json()}
+    assert [r["code"] for r in admin.get("/api/admin/games").json()] == ["11111", "33333", "22222"]            # oldest first
+    assert (rows["11111"]["players"], rows["11111"]["answers"], rows["11111"]["blocked"]) == (3, 6, "")
+    assert rows["33333"]["blocked"] == "" and "still open" in rows["22222"]["blocked"]
+    assert rows["11111"]["owner_name"] and rows["11111"]["status"] == "finished"
+
+
+def test_nothing_is_deleted_without_the_confirmation(app, admin):
+    gid = make_old_game(app, "Old", "11111")
+    for body in ({"ids": [gid]}, {"ids": [gid], "confirm": False}, {"ids": [gid], "confirm": "yes"}):
+        r = admin.post("/api/admin/games/delete", json=body)
+        assert r.status_code == 400 and "needs your confirmation" in r.text
+    assert app.state.db.get_game(gid) is not None
+
+
+def test_deleting_games_removes_their_players_and_answers_and_skips_one_still_open(app, admin):
+    old = make_old_game(app, "Finished long ago", "11111", players=3, answers=6)
+    stale = make_old_game(app, "Abandoned lobby", "33333", status="open", hours_old=30, players=1, answers=0)
+    fresh = make_old_game(app, "Open lobby", "22222", status="open", hours_old=1, players=2, answers=0)
+    keep = make_old_game(app, "Another finished", "44444", players=1, answers=1)
+    app.state.manager.games["33333"] = object()                                      # the abandoned lobby is still loaded in memory
+    r = admin.post("/api/admin/games/delete", json={"ids": [old, stale, fresh], "confirm": True})
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert (d["games"], d["players"], d["answers"]) == (2, 4, 6)
+    assert [(x["code"], "still open" in x["reason"]) for x in d["refused"]] == [("22222", True)]
+    db = app.state.db
+    assert db.get_game(old) is None and db.get_game(stale) is None and db.get_game(fresh) is not None and db.get_game(keep) is not None
+    assert db._one("SELECT COUNT(*) n FROM players WHERE game_id IN (?,?)", (old, stale))["n"] == 0             # personal details go with the game
+    assert db._one("SELECT COUNT(*) n FROM answers WHERE game_id=?", (old,))["n"] == 0
+    assert db._one("SELECT COUNT(*) n FROM players WHERE game_id=?", (keep,))["n"] == 1                       # others are untouched
+    assert "33333" not in app.state.manager.games
+    assert d["storage"]["counts"]["games"] == 2
+    entry = admin.get("/api/admin/ai/audit", params={"action": "cleanup"}).json()["rows"][0]
+    assert "Deleted 2 games with 4 players and 6 answers" in entry["message"] and "Finished long ago (11111)" in entry["message"]
+
+
+def test_the_list_of_games_to_delete_must_be_sensible(admin):
+    for ids in ([], ["x"], list(range(501)), None, "all"):
+        r = admin.post("/api/admin/games/delete", json={"ids": ids, "confirm": True})
+        assert r.status_code == 400, ids
+
+
+def test_a_game_used_by_an_event_is_tagged_so_the_admin_can_see_it(app, admin):
+    gid = make_old_game(app, "Event game", "55555")
+    eid = app.state.db.create_event("autumn", 1, "Autumn", "", time.time() + 99999, 60, "Europe/London", None, 100)
+    app.state.db._run("UPDATE events SET game_code='55555' WHERE id=?", (eid,))
+    assert next(g for g in admin.get("/api/admin/games").json() if g["id"] == gid)["events"] == 1

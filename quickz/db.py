@@ -198,6 +198,9 @@ class Database:
         if "avatar" not in cols:  # databases created by the first MVP
             self._conn.execute("ALTER TABLE players ADD COLUMN avatar TEXT NOT NULL DEFAULT ''")
             self._conn.commit()
+        if "screen_bg_wash" not in {r[1] for r in self._conn.execute("PRAGMA table_info(quizzes)")}:   # how strongly the background picture shows
+            self._conn.execute("ALTER TABLE quizzes ADD COLUMN screen_bg_wash INTEGER NOT NULL DEFAULT 40")
+            self._conn.commit()
         if "lobby_music" not in {r[1] for r in self._conn.execute("PRAGMA table_info(quizzes)")}:   # music for the waiting screen
             self._conn.execute("ALTER TABLE quizzes ADD COLUMN lobby_music TEXT NOT NULL DEFAULT ''")
             self._conn.commit()
@@ -294,15 +297,15 @@ class Database:
     def create_quiz(self, quiz: dict, owner_id=None) -> int:
         now = time.time()
         cur = self._run(
-            "INSERT INTO quizzes(title,description,cover,screen_bg,lobby_music,questions,created_at,updated_at,owner_id) VALUES(?,?,?,?,?,?,?,?,?)",
-            (quiz["title"], quiz["description"], quiz.get("cover", ""), quiz.get("screen_bg", ""), quiz.get("lobby_music", ""), json.dumps(quiz["questions"]), now, now, owner_id),
+            "INSERT INTO quizzes(title,description,cover,screen_bg,screen_bg_wash,lobby_music,questions,created_at,updated_at,owner_id) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (quiz["title"], quiz["description"], quiz.get("cover", ""), quiz.get("screen_bg", ""), quiz.get("screen_bg_wash", 40), quiz.get("lobby_music", ""), json.dumps(quiz["questions"]), now, now, owner_id),
         )
         return cur.lastrowid
 
     def update_quiz(self, quiz_id: int, quiz: dict) -> bool:
         cur = self._run(
-            "UPDATE quizzes SET title=?,description=?,cover=?,screen_bg=?,lobby_music=?,questions=?,updated_at=? WHERE id=?",
-            (quiz["title"], quiz["description"], quiz.get("cover", ""), quiz.get("screen_bg", ""), quiz.get("lobby_music", ""), json.dumps(quiz["questions"]), time.time(), quiz_id),
+            "UPDATE quizzes SET title=?,description=?,cover=?,screen_bg=?,screen_bg_wash=?,lobby_music=?,questions=?,updated_at=? WHERE id=?",
+            (quiz["title"], quiz["description"], quiz.get("cover", ""), quiz.get("screen_bg", ""), quiz.get("screen_bg_wash", 40), quiz.get("lobby_music", ""), json.dumps(quiz["questions"]), time.time(), quiz_id),
         )
         return cur.rowcount > 0
 
@@ -349,6 +352,26 @@ class Database:
         marks = ",".join("?" * len(ids))
         self._run(f"UPDATE events SET quiz_id=NULL WHERE quiz_id IN ({marks})", tuple(ids))
         return self._run(f"DELETE FROM quizzes WHERE id IN ({marks})", tuple(ids)).rowcount
+
+    def game_overview(self, limit: int = 3000) -> list:
+        """Every host's games, oldest first, with what a clean-up needs to decide: how old, how big, who played."""
+        return self._all(
+            """SELECT g.id,g.code,g.title,g.status,g.created_at,g.finished_at,g.owner_id,COALESCE(u.display_name,'') AS owner_name,
+                      (SELECT COUNT(*) FROM players p WHERE p.game_id=g.id AND p.is_bot=0 AND p.kicked=0) AS players,
+                      (SELECT COUNT(*) FROM answers a WHERE a.game_id=g.id) AS answers,
+                      (SELECT COUNT(*) FROM events e WHERE e.game_code=g.code) AS events
+               FROM games g LEFT JOIN users u ON u.id=g.owner_id ORDER BY g.created_at ASC LIMIT ?""", (limit,))
+
+    def delete_games(self, ids) -> dict:
+        """Remove games with their players and answers (the database cascades). Returns what went."""
+        ids = [int(i) for i in ids]
+        if not ids:
+            return {"games": 0, "players": 0, "answers": 0}
+        marks = ",".join("?" * len(ids))
+        players = self._one(f"SELECT COUNT(*) n FROM players WHERE game_id IN ({marks})", tuple(ids))["n"]
+        answers = self._one(f"SELECT COUNT(*) n FROM answers WHERE game_id IN ({marks})", tuple(ids))["n"]
+        games = self._run(f"DELETE FROM games WHERE id IN ({marks})", tuple(ids)).rowcount
+        return {"games": games, "players": players, "answers": answers}
 
     def storage_counts(self) -> dict:
         one = lambda sql: self._one(sql)["n"]

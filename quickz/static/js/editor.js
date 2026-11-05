@@ -8,7 +8,7 @@ function quizProblems(quiz) {
   quiz.questions.forEach((q, qi) => { const m = questionProblems(q); if (m.length) out.push({ qi, id: q.id, msgs: m }); });
   return out;
 }
-const cleanForSave = quiz => ({ title: quiz.title.trim(), description: quiz.description, cover: quiz.cover || '', screen_bg: quiz.screen_bg || '', lobby_music: quiz.lobby_music || '', questions: quiz.questions.map(cleanQuestion) });
+const cleanForSave = quiz => ({ title: quiz.title.trim(), description: quiz.description, cover: quiz.cover || '', screen_bg: quiz.screen_bg || '', screen_bg_wash: quiz.screen_bg_wash ?? 40, lobby_music: quiz.lobby_music || '', questions: quiz.questions.map(cleanQuestion) });
 
 /** The questions a quiz *loads* with come from the server fully formed; give them the editor-only bits. */
 function hydrateQuestion(q) {
@@ -26,7 +26,7 @@ function hydrateQuestion(q) {
 
 /* ---------------------------------------------------------------- editor view */
 async function renderEditor(id) {
-  let quiz = { title: 'Untitled quiz', description: '', cover: '', screen_bg: '', lobby_music: '', questions: [newQuestion('mcq')] };
+  let quiz = { title: 'Untitled quiz', description: '', cover: '', screen_bg: '', screen_bg_wash: 40, lobby_music: '', questions: [newQuestion('mcq')] };
   let quizId = id === 'new' ? null : id;
   if (quizId) {
     try { quiz = await api('/api/quizzes/' + quizId); quiz.questions.forEach(hydrateQuestion); }
@@ -106,8 +106,17 @@ async function renderEditor(id) {
       pictureField({ value: quiz.screen_bg || '', max: 1920, label: 'Drop a background picture here, or click to browse', hint: `PNG, JPEG or WebP, up to ${window.QUICKZ_MAX_IMAGE_MB || 2} MB.`, onValue: (url, img) => { if (img === undefined) setBg(url); } }),
       el('span', { class: 'hint' }, `PNG, JPEG or WebP, up to ${window.QUICKZ_MAX_IMAGE_MB || 2} MB. Fills the whole screen at any resolution: it is scaled to cover the screen and centred, so the edges may be trimmed. Use a wide picture (16:9) with calm areas. The text stays readable on top.`),
       typeof aiBackgroundButton === 'function' ? aiBackgroundButton(quiz, setBg) : null,
+      quiz.screen_bg ? washPicker() : null,
       el('label', { class: 'look-h' }, 'Waiting-screen music', el('span', { class: 'faint' }, ' · plays until the quiz starts')),
       musicField());
+  }
+  /** How strongly the background picture shows: a soft wash over it keeps the words readable. */
+  function washPicker() {
+    const levels = [[60, 'Strong', 'Words come first'], [40, 'Medium', 'A balance'], [20, 'Light', 'The picture comes first'], [0, 'None', 'The picture as it is']];
+    const now = levels.reduce((best, l) => Math.abs(l[0] - (quiz.screen_bg_wash ?? 40)) < Math.abs(best[0] - (quiz.screen_bg_wash ?? 40)) ? l : best, levels[1])[0];
+    return el('div', { class: 'field', style: { marginTop: '.4rem' } }, el('label', {}, 'Picture strength'),
+      el('div', { class: 'segmented', role: 'radiogroup', 'aria-label': 'Picture strength' }, levels.map(([v, l, tip]) => el('button', { type: 'button', role: 'radio', title: tip, 'aria-pressed': String(v === now), onclick: () => { quiz.screen_bg_wash = v; touch(); drawCover(); } }, l))),
+      el('span', { class: 'hint' }, 'A soft white wash over the picture keeps the words easy to read. Choose Light or None for a vivid picture, or Strong if the words are hard to read.'));
   }
   /** Music for the projector while players join. It loops on the first screen and stops the moment the quiz starts. */
   function musicField() {

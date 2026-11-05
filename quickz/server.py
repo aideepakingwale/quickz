@@ -459,7 +459,7 @@ def create_app(settings: Settings, guard: auth.LoginGuard | None = None, cloud: 
     @app.get("/api/quizzes/{quiz_id}/export")
     async def export_quiz(quiz_id: int, user: dict = Depends(user_dep)):
         quiz = quiz_for(user, quiz_id)
-        payload = {"title": quiz["title"], "description": quiz["description"], "cover": quiz.get("cover", ""), "screen_bg": quiz.get("screen_bg", ""), "lobby_music": quiz.get("lobby_music", ""), "questions": quiz["questions"]}
+        payload = {"title": quiz["title"], "description": quiz["description"], "cover": quiz.get("cover", ""), "screen_bg": quiz.get("screen_bg", ""), "screen_bg_wash": quiz.get("screen_bg_wash", 40), "lobby_music": quiz.get("lobby_music", ""), "questions": quiz["questions"]}
         return Response(json.dumps(payload, indent=2), media_type="application/json", headers={
             "Content-Disposition": f'attachment; filename="quiz-{quiz_id}.json"'})
 
@@ -864,6 +864,37 @@ def create_app(settings: Settings, guard: auth.LoginGuard | None = None, cloud: 
     @app.get("/api/admin/storage")
     async def admin_storage(admin: dict = Depends(admin_dep)):
         return storage_view()
+
+    @app.get("/api/admin/games")
+    async def admin_games(admin: dict = Depends(admin_dep)):
+        now = time.time()
+        return [{**g, "blocked": adminconf_mod.game_block_reason(g, now)} for g in db.game_overview()]
+
+    @app.post("/api/admin/games/delete")
+    async def admin_games_delete(request: Request, admin: dict = Depends(admin_dep)):
+        body = await request.json()
+        if not isinstance(body, dict) or body.get("confirm") is not True:
+            raise ApiError(400, "Deleting games needs your confirmation.", "confirm_required")
+        raw = body.get("ids")
+        if not isinstance(raw, list) or not raw or len(raw) > 500:
+            raise ApiError(400, "Choose between 1 and 500 games to delete.", "bad_request")
+        try:
+            ids = {int(i) for i in raw}
+        except (TypeError, ValueError):
+            raise ApiError(400, "Bad request", "bad_request") from None
+        now = time.time()
+        rows = {g["id"]: g for g in db.game_overview(limit=100000) if g["id"] in ids}
+        ok, refused = [], []
+        for gid, g in rows.items():
+            reason = adminconf_mod.game_block_reason(g, now)
+            (refused if reason else ok).append({"id": gid, "title": g["title"], "code": g["code"], "reason": reason} if reason else g)
+        gone = db.delete_games([g["id"] for g in ok]) if ok else {"games": 0, "players": 0, "answers": 0}
+        for g in ok:
+            manager.games.pop(g["code"], None)                   # a stale open game may still be loaded in memory
+        if gone["games"]:
+            shown = "; ".join(f"{g['title'][:40]} ({g['code']})" for g in ok[:5]) + (f" and {len(ok) - 5} more" if len(ok) > 5 else "")
+            ai_note(admin, request, "cleanup", f"Deleted {gone['games']} game{'s' if gone['games'] != 1 else ''} with {gone['players']} players and {gone['answers']} answers: {shown}")
+        return {**gone, "refused": refused, "storage": storage_view()}
 
     @app.get("/api/admin/quizzes")
     async def admin_quizzes(admin: dict = Depends(admin_dep)):

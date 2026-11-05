@@ -77,6 +77,18 @@ def apply(settings, guard, values: dict) -> None:
         guard.lock = values["login_lock_minutes"] * 60
 
 
+STALE_GAME_HOURS = 12            # a game that never finished is treated as abandoned after this long
+
+
+def game_block_reason(row: dict, now: float) -> str:
+    """Why a game cannot be deleted right now, or "" when it can. A finished game can always go; one that is still open must be old."""
+    if row["status"] == "finished":
+        return ""
+    if now - row["created_at"] < STALE_GAME_HOURS * 3600:
+        return f"It is still open (started less than {STALE_GAME_HOURS} hours ago)."
+    return ""
+
+
 UPLOAD_REF = re.compile(r"/uploads/([0-9a-f]{16}\.[a-z0-9]{3,4})")
 
 

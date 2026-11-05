@@ -369,7 +369,7 @@ const LobbyMusic = {
 
 function render(v) {
   applySkin(v.skin);
-  applyBackground(v.bg);
+  applyBackground(v.bg, v.bg_wash);
   preloadImages(v.preload);
   $('#s-title').textContent = v.title;
   document.title = 'DiQuizBuzz · ' + v.title;

@@ -590,15 +590,18 @@ function countUp(node, to, { from = 0, ms = 900, fmt = fmtScore } = {}) {
 
 /** The quiz's background picture fills the whole screen at any resolution (scaled to cover, centred), under a soft wash so the text stays readable. */
 let bgNow = null;
-function applyBackground(url) {
+function applyBackground(url, wash) {
   url = url || '';
+  const washNow = (Number.isFinite(Number(wash)) && wash !== '' && wash != null ? Math.max(0, Math.min(85, Number(wash))) : 40) / 100 + (document.body.classList.contains('player') ? 0.1 : 0);      // a phone is held closer, so a little more wash
+  let layer = document.querySelector('.screen-bg');
+  if (layer) layer.style.setProperty('--wash', String(Math.min(0.9, washNow)));
   if (url === bgNow) return;
   bgNow = url;
-  let layer = document.querySelector('.screen-bg');
   if (!url) { layer?.remove(); document.body.classList.remove('has-bg'); return; }
   const done = () => {
     if (!layer) { layer = el('div', { class: 'screen-bg', 'aria-hidden': 'true' }); document.body.prepend(layer); }
     layer.style.backgroundImage = `url("${url.replace(/"/g, '%22')}")`;
+    layer.style.setProperty('--wash', String(Math.min(0.9, washNow)));
     document.body.classList.add('has-bg');
   };
   const probe = new Image();                                // show it only once it has loaded, so there is no flash of an empty frame

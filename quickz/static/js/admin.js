@@ -9,8 +9,8 @@ const fmtBytes = b => (b >= 1073741824 ? (b / 1073741824).toFixed(1) + ' GB' : b
 
 async function renderAdminSettings() {
   mount(el('div', { class: 'skeleton', style: { height: '320px' } }));
-  let conf, storage, quizzes;
-  try { [conf, storage, quizzes] = await Promise.all([api('/api/admin/settings'), api('/api/admin/storage'), api('/api/admin/quizzes')]); } catch (e) { return ui.toast(e.message, 'error'); }
+  let conf, storage, quizzes, games;
+  try { [conf, storage, quizzes, games] = await Promise.all([api('/api/admin/settings'), api('/api/admin/storage'), api('/api/admin/quizzes'), api('/api/admin/games')]); } catch (e) { return ui.toast(e.message, 'error'); }
   const DAY = 86400;
   const f = { text: '', owner: '', idle: '', edited: '', sort: 'edited_old' };
   const picked = new Set();
@@ -139,6 +139,67 @@ async function renderAdminSettings() {
     } catch (e) { ui.toast(e.message, 'error'); }
   }
 
+  /* ------------------------------------------------------------ clean up games */
+  const gamesBox = el('div', { class: 'card' });
+  const gf = { text: '', owner: '', status: '', age: '', sort: 'old' }, gpicked = new Set();
+  const gOwners = () => [...new Map(games.map(g => [g.owner_id, g.owner_name || 'Unassigned'])).entries()];
+  function shownGames() {
+    const now = Date.now() / 1000, t = gf.text.toLowerCase();
+    const list = games.filter(g => (!t || g.title.toLowerCase().includes(t) || g.code.includes(t)) && (!gf.owner || String(g.owner_id) === gf.owner)
+      && (!gf.status || (gf.status === 'finished' ? g.status === 'finished' : g.status !== 'finished')) && (!gf.age || now - g.created_at > Number(gf.age) * DAY));
+    const by = { old: (a, b) => a.created_at - b.created_at, new: (a, b) => b.created_at - a.created_at, players: (a, b) => b.players - a.players, answers: (a, b) => b.answers - a.answers };
+    return list.sort(by[gf.sort]);
+  }
+  function drawGames() {
+    const list = shownGames(), pickable = list.filter(g => !g.blocked);
+    const sel = (label, key, items) => el('select', { class: 'select', 'aria-label': label, style: { maxWidth: '14rem' }, onchange: e => { gf[key] = e.target.value; drawGames(); } },
+      items.map(([v, l]) => el('option', { value: v, selected: gf[key] === v }, l)));
+    const refs = new Map();
+    const delBtn = el('button', { class: 'btn danger', type: 'button', onclick: () => deleteGames(games.filter(g => gpicked.has(g.id))) });
+    const counter = el('span', { class: 'faint' });
+    const master = el('input', { type: 'checkbox', 'aria-label': 'Select every game shown that can be deleted', onchange: e => { pickable.forEach(g => { e.target.checked ? gpicked.add(g.id) : gpicked.delete(g.id); }); sync(); } });
+    function sync() {
+      const n = pickable.filter(g => gpicked.has(g.id)).length, all = games.filter(g => gpicked.has(g.id)).length;
+      refs.forEach(({ tr, cb }, id) => { cb.checked = gpicked.has(id); tr.classList.toggle('picked', cb.checked); });
+      master.checked = !!pickable.length && n === pickable.length; master.indeterminate = n > 0 && n < pickable.length;
+      delBtn.disabled = !all; delBtn.replaceChildren(icon('trash'), all ? `Delete ${all} selected` : 'Delete selected');
+      counter.textContent = `${list.length} of ${games.length} shown · ${all} selected`;
+    }
+    gamesBox.replaceChildren(
+      el('div', { class: 'row nowrap' }, el('div', { class: 'grow' }, el('h3', { style: { margin: 0 } }, 'Clean up games'),
+        el('div', { class: 'faint' }, 'Every host’s games. Deleting a game removes its results for good: the leaderboard, every answer, and the names and emails of its players. A game that is still open can only be deleted after it is 12 hours old.'))),
+      el('div', { class: 'row', style: { gap: '.5rem', flexWrap: 'wrap', margin: '.8rem 0' } },
+        el('input', { class: 'input', placeholder: 'Search title or code', value: gf.text, 'aria-label': 'Search games', style: { maxWidth: '14rem' }, oninput: e => { gf.text = e.target.value; const pos = e.target.selectionStart; drawGames(); const box = gamesBox.querySelector('input.input'); if (box) { box.focus(); try { box.setSelectionRange(pos, pos); } catch (x) { /* fine */ } } } }),
+        sel('Host', 'owner', [['', 'All hosts'], ...gOwners().map(([id, n]) => [String(id), n])]),
+        sel('Status', 'status', [['', 'Any status'], ['finished', 'Finished'], ['open', 'Not finished']]),
+        sel('Age', 'age', [['', 'Started any time ago'], ['30', 'Started over 30 days ago'], ['90', 'Started over 90 days ago'], ['180', 'Started over 6 months ago'], ['365', 'Started over a year ago']]),
+        sel('Order', 'sort', [['old', 'Oldest first'], ['new', 'Newest first'], ['players', 'Most players first'], ['answers', 'Most answers first']])),
+      list.length ? el('div', { class: 'tbl-wrap' }, el('table', { class: 'tbl' },
+        el('thead', {}, el('tr', {}, el('th', {}, master), ['Game', 'Host', 'Players', 'Answers', 'Started', 'Status'].map(h => el('th', {}, h)))),
+        el('tbody', {}, list.map(g => { const cb = el('input', { type: 'checkbox', disabled: !!g.blocked, title: g.blocked || '', 'aria-label': `Select ${g.title} (${g.code})`, onchange: e => { e.target.checked ? gpicked.add(g.id) : gpicked.delete(g.id); sync(); } });
+          const tr = el('tr', {}, el('td', {}, cb),
+            el('td', {}, el('b', {}, g.title), el('span', { class: 'chip mono', style: { marginLeft: '.4rem' } }, g.code), g.events ? el('span', { class: 'chip warn', style: { marginLeft: '.4rem' }, title: 'An event points at this game' }, 'event') : null),
+            el('td', { class: 'muted' }, g.owner_name || 'Unassigned'), el('td', { class: 'num' }, g.players), el('td', { class: 'num' }, g.answers),
+            el('td', { class: 'muted' }, timeAgo(g.created_at)),
+            el('td', {}, g.status === 'finished' ? el('span', { class: 'chip good' }, 'Finished') : el('span', { class: 'chip warn', title: g.blocked || 'Never finished' }, 'Open')));
+          refs.set(g.id, { tr, cb }); return tr; })))) : el('p', { class: 'muted' }, games.length ? 'No game matches these filters.' : 'There are no games.'),
+      el('div', { class: 'row', style: { justifyContent: 'space-between', marginTop: '.8rem' } }, counter, delBtn));
+    sync();
+  }
+  async function deleteGames(chosen) {
+    const players = chosen.reduce((n, g) => n + g.players, 0), answers = chosen.reduce((n, g) => n + g.answers, 0), events = chosen.filter(g => g.events).length;
+    const names = chosen.slice(0, 5).map(g => `“${g.title}” (${g.code})`).join(', ') + (chosen.length > 5 ? ` and ${chosen.length - 5} more` : '');
+    const ok = await ui.confirm({ title: `Delete ${chosen.length} game${chosen.length === 1 ? '' : 's'}?`, danger: true, confirmText: 'Delete for good',
+      message: `${names}. This permanently deletes ${players.toLocaleString()} player${players === 1 ? '' : 's'} (their names and emails), ${answers.toLocaleString()} answer${answers === 1 ? '' : 's'}, and the leaderboards and results. It cannot be undone. If you still need any results, download them from each game first.${events ? ` ${events} of these games ${events === 1 ? 'is' : 'are'} linked to an event.` : ''}` });
+    if (!ok) return;
+    try {
+      const r = await api('/api/admin/games/delete', { method: 'POST', body: { ids: chosen.map(g => g.id), confirm: true } });
+      games = await api('/api/admin/games'); gpicked.clear(); storage = r.storage;
+      ui.toast(`Deleted ${r.games} game${r.games === 1 ? '' : 's'}${r.refused.length ? `. ${r.refused.length} still open, so not deleted` : ''}`, r.refused.length ? 'info' : 'success');
+      drawGames(); drawStats(); conf = await api('/api/admin/settings'); drawChanges();
+    } catch (e) { ui.toast(e.message, 'error'); }
+  }
+
   /* ------------------------------------------------------------ unused files */
   function drawFiles() {
     const u = storage.uploads;
@@ -154,11 +215,11 @@ async function renderAdminSettings() {
 
   /* ------------------------------------------------------------ the page */
   mount(el('div', { class: 'page-head' }, el('div', { class: 'grow' }, el('h1', {}, 'Settings'),
-      el('div', { class: 'sub' }, 'Platform limits and security, and a clean-up of old quizzes and unused files. Only a Super Admin sees this page.')),
+      el('div', { class: 'sub' }, 'Platform limits and security, and a clean-up of old quizzes, old games and unused files. Only a Super Admin sees this page.')),
       el('a', { class: 'btn', href: '#/ai' }, icon('sparkle'), 'AI settings'), el('a', { class: 'btn', href: '#/team' }, icon('users'), 'Team')),
     statsBox,
     el('h2', { class: 'ai-h' }, 'Limits, uploads and security'), formBox,
-    el('h2', { class: 'ai-h' }, 'Clean up'), cleanup, el('div', { style: { height: '1rem' } }), filesBox,
+    el('h2', { class: 'ai-h' }, 'Clean up'), cleanup, el('div', { style: { height: '1rem' } }), gamesBox, el('div', { style: { height: '1rem' } }), filesBox,
     el('h2', { class: 'ai-h' }, 'History'), changesBox);
-  drawStats(); drawForm(); drawChanges(); drawCleanup(); drawFiles();
+  drawStats(); drawForm(); drawChanges(); drawCleanup(); drawGames(); drawFiles();
 }

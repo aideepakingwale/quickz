@@ -677,7 +677,7 @@ class Game:
 
     def _common(self, ranks: dict) -> dict:
         return {
-            "phase": self.phase, "title": self.title, "description": self.description, "bg": self.settings.get("screen_bg", ""), "music": self.settings.get("lobby_music", ""),
+            "phase": self.phase, "title": self.title, "description": self.description, "bg": self.settings.get("screen_bg", ""), "bg_wash": self.settings.get("screen_bg_wash", 40), "music": self.settings.get("lobby_music", ""),
             "code": self.code, "server_now": now_ms(), "players": len(ranks["order"]),
             "skin": self.settings.get("skin", "classic"), "jokers": bool(self.settings.get("jokers")),
             "pack": self.settings.get("sound_pack", "gameshow"), "reactions": bool(self.settings.get("reactions")),
@@ -1195,7 +1195,7 @@ class Game:
         ids = [x["id"] for x in questions]
         pos = ids.index(after_id) + 1 if (where != "end" and after_id in ids) else len(questions)
         questions.insert(pos, clean)
-        self.db.update_quiz(self.quiz_id, {"title": quiz["title"], "description": quiz["description"], "cover": quiz.get("cover", ""), "screen_bg": quiz.get("screen_bg", ""), "lobby_music": quiz.get("lobby_music", ""), "questions": questions})
+        self.db.update_quiz(self.quiz_id, {"title": quiz["title"], "description": quiz["description"], "cover": quiz.get("cover", ""), "screen_bg": quiz.get("screen_bg", ""), "screen_bg_wash": quiz.get("screen_bg_wash", 40), "lobby_music": quiz.get("lobby_music", ""), "questions": questions})
         return True
 
     async def add_question(self, raw: dict, only=None, where: str = "next", save: bool = False):
@@ -1469,6 +1469,7 @@ class GameManager:
                 merged[k] = clean
         merged["screen_bg"] = quiz.get("screen_bg", "")        # the big screen's background picture and waiting-screen music are fixed when the game is made
         merged["lobby_music"] = quiz.get("lobby_music", "")
+        merged["screen_bg_wash"] = quiz.get("screen_bg_wash", 40)
         while True:
             code = str(secrets.randbelow(90000) + 10000)
             if code not in self.games:

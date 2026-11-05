@@ -361,6 +361,7 @@ body.player .drift i { --o: .06; }
 @keyframes desc-scroll { 0%, 14% { transform: translateY(0); } 86%, 100% { transform: translateY(calc(var(--shift, 0px) * -1)); } }
 @media (prefers-reduced-motion: reduce) { .desc-box.scrolling .desc { animation: none; } }
 .screen-bg { position: fixed; inset: 0; z-index: 0; background-size: cover; background-position: center; background-repeat: no-repeat; animation: fade-up .6s var(--ease) both; }
-.screen-bg::after { content: ''; position: absolute; inset: 0; background: color-mix(in srgb, var(--bg) 58%, transparent); }
+.screen-bg::after { content: ''; position: absolute; inset: 0; background: color-mix(in srgb, var(--bg) calc(var(--wash, .4) * 100%), transparent); }      /* the host chooses how strongly the picture shows */
 body.has-bg .drift { display: none; }
-body.player .screen-bg::after { background: color-mix(in srgb, var(--bg) 72%, transparent); }          /* phones are held close, so the wash is stronger */
+/* a light wash leaves little behind the words, so give them a soft halo that follows the theme */
+body.has-bg .lobby h1, body.has-bg .lobby .desc, body.has-bg .lobby .how, body.has-bg .wall-head, body.has-bg .wall-empty, body.has-bg .p-stage h1, body.has-bg .p-stage .muted, body.has-bg .p-stage .q-text { text-shadow: 0 0 .35em color-mix(in srgb, var(--bg) 92%, transparent), 0 0 .9em color-mix(in srgb, var(--bg) 75%, transparent); }

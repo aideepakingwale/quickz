@@ -524,6 +524,7 @@ def validate_quiz(raw: dict) -> dict:
         "description": _clean(raw.get("description"), 1000),
         "cover": _upload_url(raw.get("cover"), "Images"),
         "screen_bg": _upload_url(raw.get("screen_bg"), "Images"),
+        "screen_bg_wash": _int(raw.get("screen_bg_wash"), 0, 85, 40),
         "lobby_music": _music_url(raw.get("lobby_music")),
         "questions": cleaned,
     }

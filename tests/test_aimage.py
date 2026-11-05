@@ -458,3 +458,30 @@ def test_the_phone_music_switch_is_a_normal_game_setting_and_the_library_knows_w
     plain = host.post("/api/quizzes", json={"title": "Plain", "questions": [QUESTION]}).json()["id"]
     flags = {q["id"]: q["has_music"] for q in host.get("/api/quizzes").json()}
     assert flags[with_music] == 1 and flags[plain] == 0
+
+
+# ---- how strongly the background picture shows ------------------------------------------------------------------------------
+
+def test_a_quiz_keeps_its_picture_strength_and_the_screens_get_it(app, host):
+    from quickz.engine import GameManager
+    bg = "/uploads/fedcba9876543210.gif"
+    qid = host.post("/api/quizzes", json={"title": "Vivid", "screen_bg": bg, "screen_bg_wash": 10, "questions": [QUESTION]}).json()["id"]
+    assert host.get(f"/api/quizzes/{qid}").json()["screen_bg_wash"] == 10
+    copy = host.post(f"/api/quizzes/{qid}/duplicate").json()["id"]
+    assert host.get(f"/api/quizzes/{copy}").json()["screen_bg_wash"] == 10
+    assert json.loads(host.get(f"/api/quizzes/{qid}/export").text)["screen_bg_wash"] == 10
+
+    async def go():
+        g = GameManager(app.state.db).create(qid, {})
+        p = g.join("Pat")
+        assert g.view_screen(g._ranks())["bg_wash"] == 10 and g.view_player(p, g._ranks())["bg_wash"] == 10
+    import asyncio
+    asyncio.run(go())
+
+
+def test_the_picture_strength_defaults_and_is_kept_sensible(host):
+    new = host.post("/api/quizzes", json={"title": "Plain", "questions": []}).json()["id"]
+    assert host.get(f"/api/quizzes/{new}").json()["screen_bg_wash"] == 40
+    for sent, stored in ((200, 85), (-5, 0), ("x", 40), (None, 40), (0, 0), (60, 60)):
+        q = host.post("/api/quizzes", json={"title": "T", "screen_bg_wash": sent, "questions": []}).json()["id"]
+        assert host.get(f"/api/quizzes/{q}").json()["screen_bg_wash"] == stored, sent

@@ -36,6 +36,16 @@ Lists every host's quizzes in one table: title, host, questions, how often and w
 - An **event** that used a deleted quiz is kept but left without a quiz. Quizzes used by events are tagged in the list.
 - Up to 500 quizzes can be deleted in one go. Deleting cannot be undone, so use the **Export** option on a quiz first if you might want it back.
 
+## Clean up games
+
+Lists every host's games, oldest first, with host, players, answers, when they started and whether they finished. Filter by title or code, host, finished or not, and age (started over 30 days, 90 days, 6 months or a year ago), and sort by oldest, newest, most players or most answers.
+
+- **Deleting a game removes its results for good**: the leaderboard, every answer, and the names and emails of its players. The confirmation says exactly how many players and answers go, and suggests downloading the results from each game first.
+- Nothing is deleted without that confirmation. The server also refuses a request that does not carry it.
+- **A game that is still open cannot be deleted until it is 12 hours old**, so a game being played now can never be removed by mistake. Its row cannot be ticked. Finished games, and lobbies abandoned for more than 12 hours, can be.
+- A game that an event points at is tagged **event**, and the confirmation mentions it.
+- Up to 500 games can be deleted at once. Each deletion is recorded in the audit log under **Cleanup**.
+
 ## Unused uploaded files
 
 Deleting quizzes leaves their pictures and music behind. This finds files that no quiz, game or event uses and removes them. Files uploaded in the last 24 hours are never touched, because someone may still be editing a quiz they have not saved. If you use the backup bucket, copies there are not removed.

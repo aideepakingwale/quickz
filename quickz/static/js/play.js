@@ -179,7 +179,7 @@ let lastView = null;
 function render(v) {
   lastView = v;
   applySkin(v.skin);
-  applyBackground(v.bg);                                 // the quiz's picture sits behind the whole game
+  applyBackground(v.bg, v.bg_wash);                                 // the quiz's picture sits behind the whole game
   PhoneMusic.sync(v);                                    // waiting-screen music: lobby only
   preloadImages(v.preload);
   showExtras(v);
