@@ -367,5 +367,15 @@ body.player .drift i { --o: .06; }
 .screen-bg.contain .bg-main { background-size: contain; }
 .screen-bg::after { content: ''; position: absolute; inset: 0; background: color-mix(in srgb, var(--bg) calc(var(--wash, .4) * 100%), transparent); }      /* the host chooses how strongly the picture shows */
 body.has-bg .drift { display: none; }
-/* a light wash leaves little behind the words, so give them a soft halo that follows the theme */
-body.has-bg .lobby h1, body.has-bg .lobby .desc, body.has-bg .lobby .how, body.has-bg .wall-head, body.has-bg .wall-empty, body.has-bg .p-stage h1, body.has-bg .p-stage .muted, body.has-bg .p-stage .q-text { text-shadow: 0 0 .35em color-mix(in srgb, var(--bg) 92%, transparent), 0 0 .9em color-mix(in srgb, var(--bg) 75%, transparent); }
+/* Words sit on soft panels, so they stay readable on any picture, whatever the picture strength. */
+body.has-bg { --panel: color-mix(in srgb, var(--bg) 82%, transparent); }
+body.has-bg .s-title, body.has-bg .s-join, body.has-bg .s-foot-line, body.has-bg .site-foot > span:first-child { background: var(--panel); border-radius: 999px; padding: .15em .8em; backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+body.has-bg .s-join:empty, body.has-bg .s-title:empty { background: none; padding: 0; backdrop-filter: none; -webkit-backdrop-filter: none; }
+body.screen.has-bg .lobby .left { background: var(--panel); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border-radius: 1.8rem; padding: 1.6rem 2.2rem 1.8rem; box-shadow: 0 1rem 2.4rem -1.2rem rgba(16, 28, 39, .5); }
+body.screen.has-bg .lobby .desc, body.screen.has-bg .lobby .how { color: var(--text); }
+body.has-bg .wall-head, body.has-bg .wall-empty { background: var(--panel); border-radius: 999px; padding: .25em 1.1em .25em .3em; width: fit-content; backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+body.has-bg .wall-empty { padding-left: 1.1em; color: var(--text-muted); animation: none; }
+body.screen.has-bg .s-main > .scene:not(.lobby) { background: color-mix(in srgb, var(--bg) 58%, transparent); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); border-radius: 2rem; padding: 1.2rem 1.8rem; }
+body.player.has-bg .p-stage > .scene { background: color-mix(in srgb, var(--bg) 66%, transparent); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); border-radius: 1.2rem; padding: 1rem; margin: .4rem 0; }
+body.player.has-bg .p-stage > .scene .p-foot, body.player.has-bg .p-stage > .scene .site-foot { background: none; backdrop-filter: none; }
+body.player.has-bg .p-top .who { background: var(--panel); border-radius: 999px; padding: .25rem .9rem .25rem .3rem; backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }

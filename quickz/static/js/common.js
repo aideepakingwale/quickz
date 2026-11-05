@@ -722,7 +722,7 @@ function zoomControl(src, alt = '') {
   return c;
 }
 
-const ZOOM_PICTURES = '.qv-img img, .o-pic img, .explain img, .next-up img, .pic img, .callout img';       // question, answer, explanation and uploaded pictures
+const ZOOM_PICTURES = '.qv-img img, .o-pic img, .explain img, .next-up img, .pic img, .callout img, .joinbox .qr img';       // question, answer, explanation and uploaded pictures
 const ZOOM_SKIP = '.viewer, .pin-stage, .jig-board, .jig-stage, .jig-solved, .screen-bg';
 function decorateZoom(root = document) {
   root.querySelectorAll(ZOOM_PICTURES).forEach(img => {

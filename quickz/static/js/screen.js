@@ -48,6 +48,8 @@ function initChrome() {
   fs.addEventListener('click', e => { e.stopPropagation(); toggleFs(); });
   const unlock = () => { if (Sound.unlock()) { paintSound(); atmosphere(last); setTimeout(() => tools.classList.remove('show'), 2500); } };
   addEventListener('pointerdown', unlock); addEventListener('keydown', unlock);
+  addEventListener('keydown', e => { if (e.ctrlKey || e.metaKey || e.altKey) return; if (e.key === 'q' || e.key === 'Q') openFullPanel('qr'); else if (e.key === 'd' || e.key === 'D') openFullPanel('desc'); else if (e.key === 'Escape') closeFullPanel(); });
+  document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && document.querySelector('.full-panel[data-fs]')) closeFullPanel(); });          // Esc left full screen: leave the view too
   addEventListener('keydown', e => { if (e.key === 'f' || e.key === 'F') toggleFs(); if (e.key === 'm' || e.key === 'M') { Sound.setOn(!Sound.on); if (!Sound.on) Bed.stop(); paintSound(); atmosphere(last); } });
   let idle;
   addEventListener('mousemove', () => { document.body.classList.remove('idle'); clearTimeout(idle); idle = setTimeout(() => document.body.classList.add('idle'), 3000); });
@@ -81,11 +83,12 @@ function lobbyScene(v) {
     const root = sceneEl('lobby',
       el('div', { class: 'left' },
         el('h1', {}, v.title),
+        v.description ? expandButton('desc') : null,
         descBox,
         el('p', { class: 'how' }, 'Scan the QR code, or go to ', el('b', {}, hostText()), ' and enter this code:'),
         el('div', { class: 'code', 'aria-label': 'Game code ' + v.code }, v.code.split('').map((d, i) => el('span', { style: { animationDelay: (i * 90) + 'ms' } }, d))),
         v.jokers ? el('div', { class: 'pill joker' }, icon('bolt'), 'Double up is on: each player can double one question') : null),
-      el('div', { class: 'qr-card' }, el('img', { src: `/qr/${encodeURIComponent(v.code)}.svg`, alt: `QR code to join game ${v.code}` }), el('div', { class: 'cap' }, 'Scan to join')),
+      el('div', { class: 'qr-card' }, el('img', { src: `/qr/${encodeURIComponent(v.code)}.svg`, alt: `QR code to join game ${v.code}` }), el('div', { class: 'cap' }, 'Scan to join'), expandButton('qr')),
       el('div', { class: 'wall' }, el('div', { class: 'wall-head' }, countN, el('span', {}, 'players ready')), empty, list));
     sync(v);
     if (descBox) { root.classList.add('has-desc'); fitDescription(root, descBox); }
@@ -99,11 +102,12 @@ function fitDescription(root, box) {
   const text = box.firstElementChild;
   const fit = () => {
     if (!box.isConnected) { ro.disconnect(); return; }
-    const left = box.parentNode, qr = root.querySelector('.qr-card');
+    const left = box.parentNode;
     box.style.maxHeight = '0px'; box.classList.remove('scrolling');
     const base = left.offsetHeight, gap = parseFloat(getComputedStyle(left).rowGap) || 0;        // everything in the left column except the text
     const remPx = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
-    const room = Math.max(remPx * 5.5, (qr ? qr.offsetHeight : 0) - base - gap);          // at least a few lines, however crowded the left column is
+    const wall = 9 * remPx + (parseFloat(getComputedStyle(root).rowGap) || 0);                    // the player list below keeps at least this much
+    const room = Math.max(remPx * 5.5, root.clientHeight - wall - base - gap);                    // at least a few lines, however crowded the left column is
     box.style.maxHeight = room + 'px';
     const over = text.scrollHeight - room;
     if (over > 4) {
@@ -368,6 +372,7 @@ const LobbyMusic = {
 };
 
 function render(v) {
+  if (v.phase !== 'lobby') closeFullPanel();                                       // the quiz has started: back to the quiz
   applySkin(v.skin);
   applyBackground(v.bg, v.bg_wash);
   preloadImages(v.preload);
@@ -406,3 +411,53 @@ async function start() {
 }
 
 start();
+
+/* ---------------------------------------------------------------- the waiting screen, full screen: the QR code, or the quiz description */
+function expandButton(kind) {
+  return el('button', { class: 'expand-btn ' + kind, type: 'button', title: kind === 'qr' ? 'QR code full screen (Q)' : 'Quiz information full screen (D)',
+    'aria-label': kind === 'qr' ? 'Show the QR code full screen' : 'Show the quiz information full screen', onclick: e => { e.stopPropagation(); openFullPanel(kind); } }, icon('expand'));
+}
+function closeFullPanel() {
+  const p = document.querySelector('.full-panel');
+  if (!p) return false;
+  const fs = p.hasAttribute('data-fs');
+  p.remove(); document.body.classList.remove('full-open');
+  if (fs && document.fullscreenElement) document.exitFullscreen().catch(() => { /* already out */ });
+  return true;
+}
+/** A big, easy-to-read view for the back of the room. Q or D, the button, or a click outside it closes it again. */
+function openFullPanel(kind) {
+  const v = last;
+  if (!v || v.phase !== 'lobby') return;
+  if (closeFullPanel()) return;
+  if (kind === 'desc' && !v.description) return;
+  const close = el('button', { class: 'full-close', type: 'button', 'aria-label': 'Close', title: 'Close (Esc)', onclick: closeFullPanel }, icon('x'));
+  let body, box = null;
+  if (kind === 'qr') {
+    body = el('div', { class: 'full-qr-wrap' },
+      el('div', { class: 'full-qr' }, el('img', { src: `/qr/${encodeURIComponent(v.code)}.svg`, alt: `QR code to join game ${v.code}` })),
+      el('div', { class: 'full-join' }, el('p', {}, 'Scan the QR code, or go to ', el('b', {}, hostText()), ' and enter this code:'),
+        el('div', { class: 'code', 'aria-label': 'Game code ' + v.code }, v.code.split('').map(d => el('span', {}, d)))));
+  } else {
+    box = el('div', { class: 'desc-box full-desc' }, mdNode(v.description, 'desc'));
+    body = el('div', { class: 'full-info' }, el('h1', {}, v.title), box);
+  }
+  const panel = el('div', { class: 'full-panel ' + kind, role: 'dialog', 'aria-modal': 'true', 'aria-label': kind === 'qr' ? 'Join code, full screen' : 'Quiz information, full screen',
+    onclick: e => { if (e.target === panel) closeFullPanel(); } }, close, body, el('div', { class: 'full-hint' }, 'Press Esc, or click outside, to go back'));
+  document.body.append(panel); document.body.classList.add('full-open');
+  if (!document.fullscreenElement && panel.requestFullscreen) { panel.setAttribute('data-fs', '1'); panel.requestFullscreen().catch(() => panel.removeAttribute('data-fs')); }
+  if (box) {                                                      // long text scrolls by itself, below the title
+    const text = box.firstElementChild;
+    const fit = () => {
+      if (!box.isConnected) return;
+      const room = Math.max(120, innerHeight - box.getBoundingClientRect().top - 90);
+      box.style.maxHeight = room + 'px';
+      const over = text.scrollHeight - room;
+      box.classList.toggle('scrolling', over > 4);
+      if (over > 4) { box.style.setProperty('--shift', over + 'px'); box.style.setProperty('--dur', Math.max(12, 8 + over / 30).toFixed(1) + 's'); }
+    };
+    setTimeout(fit, 80); setTimeout(fit, 400);
+    addEventListener('resize', fit);
+  }
+  close.focus({ preventScroll: true });
+}
