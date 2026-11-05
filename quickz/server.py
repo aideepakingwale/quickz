@@ -142,7 +142,17 @@ def create_app(settings: Settings, guard: auth.LoginGuard | None = None, cloud: 
     async def lifespan(_app):
         if cloud:
             cloud.start()
+
+        async def lobby_watch():                                   # a waiting lobby follows edits to its quiz (background, music, text)
+            while True:
+                await asyncio.sleep(5)
+                try:
+                    await manager.refresh_lobbies()
+                except Exception:
+                    log.exception("could not refresh the waiting lobbies")
+        watcher = asyncio.create_task(lobby_watch())
         yield
+        watcher.cancel()
         if cloud:
             await cloud.stop()
 

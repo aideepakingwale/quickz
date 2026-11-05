@@ -143,6 +143,7 @@ class Game:
         self.quiz_id = row.get("quiz_id")
         self.title = row["title"]
         self.description = row["description"]
+        self._look_at = 0.0
         self.settings = {**DEFAULT_SETTINGS, **row["settings"]}
         self.questions: list[dict] = row["questions"]
         state = row.get("state") or {}
@@ -675,7 +676,31 @@ class Game:
             "times": [self.buzz_ms.get(pid) for pid in self.buzz_order if pid in self.players],     # ms after the question, same order
         }
 
+    LOOK_REFRESH_S = 3.0
+
+    def _follow_quiz_look(self) -> bool:
+        """A game is a copy of its quiz, made when the lobby opens. While nobody has started yet, a change to the quiz's title, lobby text,
+        background or music (made after the lobby was opened) is picked up, so the host does not have to open a new lobby. Once the quiz
+        starts, the copy is frozen."""
+        if self.phase != "lobby" or not self.quiz_id:
+            return False
+        t = time.monotonic()
+        if t - self._look_at < self.LOOK_REFRESH_S:
+            return False
+        self._look_at = t
+        look = self.db.quiz_look(self.quiz_id)
+        if not look:
+            return False
+        keys = ("screen_bg", "screen_bg_wash", "lobby_music")
+        if look["title"] == self.title and look["description"] == self.description and all(self.settings.get(k) == look[k] for k in keys):
+            return False
+        self.title, self.description = look["title"], look["description"]
+        self.settings.update({k: look[k] for k in keys})
+        self.db.set_game_look(self.id, self.title, self.description, self.settings)
+        return True
+
     def _common(self, ranks: dict) -> dict:
+        self._follow_quiz_look()
         return {
             "phase": self.phase, "title": self.title, "description": self.description, "bg": self.settings.get("screen_bg", ""), "bg_wash": self.settings.get("screen_bg_wash", 40), "music": self.settings.get("lobby_music", ""),
             "code": self.code, "server_now": now_ms(), "players": len(ranks["order"]),
@@ -1447,6 +1472,16 @@ class GameManager:
     def __init__(self, db: Database):
         self.db = db
         self.games: dict[str, Game] = {}
+
+    async def refresh_lobbies(self) -> int:
+        """Waiting lobbies that someone is looking at follow changes made to their quiz, and tell the screens and phones at once."""
+        changed = 0
+        for g in list(self.games.values()):
+            if g.phase == "lobby" and g.quiz_id and (g.hosts or g.screens or any(p.sockets for p in g.players.values())):
+                if g._follow_quiz_look():
+                    changed += 1
+                    await g.push()
+        return changed
 
     def restore(self):
         for row in self.db.open_games():

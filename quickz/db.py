@@ -417,6 +417,13 @@ class Database:
             args.append(json.dumps(settings))
         self._run(f"UPDATE games SET {','.join(sets)} WHERE id=?", (*args, game_id))
 
+    def quiz_look(self, quiz_id: int):
+        """How a quiz looks and sounds (title, lobby text, background, music): the part a waiting lobby follows."""
+        return self._one("SELECT title, description, screen_bg, screen_bg_wash, lobby_music FROM quizzes WHERE id=?", (quiz_id,))
+
+    def set_game_look(self, game_id: int, title: str, description: str, settings: dict):
+        self._run("UPDATE games SET title=?, description=?, settings=? WHERE id=?", (title, description, json.dumps(settings), game_id))
+
     def reopen_game(self, game_id: int):
         """A finished game goes live again (the host needs a tie-breaker)."""
         self._run("UPDATE games SET status='open', finished_at=NULL WHERE id=?", (game_id,))

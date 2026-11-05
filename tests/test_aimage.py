@@ -485,3 +485,65 @@ def test_the_picture_strength_defaults_and_is_kept_sensible(host):
     for sent, stored in ((200, 85), (-5, 0), ("x", 40), (None, 40), (0, 0), (60, 60)):
         q = host.post("/api/quizzes", json={"title": "T", "screen_bg_wash": sent, "questions": []}).json()["id"]
         assert host.get(f"/api/quizzes/{q}").json()["screen_bg_wash"] == stored, sent
+
+
+# ---- a waiting lobby follows its quiz -------------------------------------------------------------------------------------------
+
+def test_a_lobby_opened_before_the_background_was_set_picks_it_up_until_the_quiz_starts(app, host):
+    import asyncio
+    from quickz.engine import GameManager
+    bg, song = "/uploads/fedcba9876543210.gif", "/uploads/0011223344556677.mp3"
+    qid = host.post("/api/quizzes", json={"title": "Party", "description": "old text", "questions": [QUESTION]}).json()["id"]
+
+    def edit(**look):
+        body = {"title": "Party", "description": "old text", "questions": [QUESTION], **look}
+        assert host.put(f"/api/quizzes/{qid}", json=body).status_code == 200
+
+    async def go():
+        g = GameManager(app.state.db).create(qid, {})
+        screen = lambda: g.view_screen(g._ranks())
+        assert (screen()["bg"], screen()["music"]) == ("", "")
+        edit(title="Party night", description="new text", screen_bg=bg, screen_bg_wash=15, lobby_music=song)
+        assert screen()["bg"] == ""                                          # looked at the quiz a moment ago: not again for a few seconds
+        g._look_at = 0.0
+        v = screen()
+        assert (v["bg"], v["bg_wash"], v["music"], v["title"], v["description"]) == (bg, 15, song, "Party night", "new text")
+        stored = app.state.db.get_game(g.id)
+        assert stored["settings"]["screen_bg"] == bg and stored["title"] == "Party night" and stored["description"] == "new text"      # kept if the server restarts
+        p = g.join("Pat")
+        assert g.view_player(p, g._ranks())["bg"] == bg and g.view_player(p, g._ranks())["music"] == song
+        await g.next()
+        edit(screen_bg="/uploads/aaaaaaaaaaaaaaaa.png", title="Changed again")
+        g._look_at = 0.0
+        assert screen()["bg"] == bg and screen()["title"] == "Party night"        # once the quiz has started, the game keeps its own copy
+
+    asyncio.run(go())
+
+
+def test_a_waiting_lobby_that_someone_watches_is_refreshed_and_pushed_when_its_quiz_changes(app, host):
+    import asyncio
+    from quickz.engine import GameManager
+
+    class Socket:
+        def __init__(self):
+            self.sent = []
+
+        async def send_json(self, msg):
+            self.sent.append(msg)
+
+    async def go():
+        manager = GameManager(app.state.db)
+        qid = host.post("/api/quizzes", json={"title": "Party", "questions": [QUESTION]}).json()["id"]
+        lonely = manager.create(qid, {})
+        watched = manager.create(qid, {})
+        screen = Socket()
+        watched.screens.add(screen) if hasattr(watched.screens, "add") else watched.screens.append(screen)
+        host.put(f"/api/quizzes/{qid}", json={"title": "Party", "screen_bg": "/uploads/fedcba9876543210.gif", "questions": [QUESTION]})
+        for g in (lonely, watched):
+            g._look_at = 0.0
+        assert await manager.refresh_lobbies() == 1                              # only the lobby with a screen on it is looked at
+        assert screen.sent and screen.sent[-1]["v"]["bg"] == "/uploads/fedcba9876543210.gif"
+        assert lonely.settings["screen_bg"] == ""                                # nobody is watching that one, so it is not touched
+        assert await manager.refresh_lobbies() == 0                              # nothing changed since: nothing is sent
+
+    asyncio.run(go())
