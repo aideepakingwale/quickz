@@ -547,3 +547,11 @@ def test_a_waiting_lobby_that_someone_watches_is_refreshed_and_pushed_when_its_q
         assert await manager.refresh_lobbies() == 0                              # nothing changed since: nothing is sent
 
     asyncio.run(go())
+
+
+def test_the_browser_is_told_which_sites_pictures_may_be_linked_from(host):
+    hosts = host.get("/api/auth/state").json()["image_hosts"]
+    assert "giphy.com" in hosts and "tenor.com" in hosts and hosts == sorted(hosts)
+    r = host.post("/api/quizzes", json={"title": "T", "screen_bg": "https://example.com/party.gif", "questions": []})
+    assert r.status_code == 400 and "can be linked from" in r.text and "giphy.com" in r.text         # what the editor now says up front
+    assert host.post("/api/quizzes", json={"title": "T", "screen_bg": "https://media.giphy.com/media/x/giphy.gif", "questions": []}).status_code == 200

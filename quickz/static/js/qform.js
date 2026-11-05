@@ -168,6 +168,14 @@ async function askPictureLink() {
   const v = await ui.prompt({ title: 'Use a picture from the web', label: 'Paste the picture or GIF address (https://…). Allowed sites: Giphy, Tenor, Wikimedia, Imgur, Unsplash, Pexels, Pixabay and Flickr.', confirmText: 'Use this picture' });
   const url = (v || '').trim();
   if (!url) return null;
+  const allowed = window.QUICKZ_IMAGE_HOSTS || [];
+  let host = '';
+  try { const u = new URL(url); host = u.protocol === 'https:' ? u.hostname.toLowerCase() : ''; } catch (e) { host = ''; }
+  if (!host) { ui.toast('Use the full picture address, starting with https://', 'error', 6000); return null; }
+  if (allowed.length && !allowed.some(h => host === h || host.endsWith('.' + h))) {                 // the server would refuse the whole quiz: say so here instead
+    ui.toast(`Pictures can only be linked from ${allowed.join(', ')}. This one is from ${host}. Download it and upload the file instead.`, 'error', 9000);
+    return null;
+  }
   const ok = await new Promise(res => { const i = new Image(); i.onload = () => res(true); i.onerror = () => res(false); i.referrerPolicy = 'no-referrer'; i.src = url; });
   if (!ok) ui.toast('That address did not load as a picture. Right-click the picture on the site and copy the image address.', 'error', 6000);
   return ok ? url : null;

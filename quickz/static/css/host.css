@@ -544,3 +544,7 @@ input::-ms-reveal, input::-ms-clear { display: none; }
 .conf-changes { margin: .5rem 0 0; padding-left: 1.2rem; display: flex; flex-direction: column; gap: .3rem; }
 tr.picked { background: color-mix(in srgb, var(--danger) 7%, var(--surface)); }
 .btn.danger:disabled { background: var(--surface-3); border-color: var(--border); color: var(--text-faint); }
+.look-status { display: flex; align-items: center; gap: .5rem; margin-top: 1rem; padding: .6rem .8rem; border-radius: var(--r-md); border: 1px solid var(--border); background: var(--surface-2); font-size: .9rem; }
+.look-status.ok { color: var(--success); border-color: color-mix(in srgb, var(--success) 40%, transparent); }
+.look-status.err { color: var(--danger); border-color: var(--danger); background: var(--bad-bg, var(--surface-2)); font-weight: 600; }
+

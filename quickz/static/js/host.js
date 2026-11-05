@@ -106,7 +106,7 @@ async function boot() {
   let st;
   try { st = await api('/api/auth/state'); }
   catch (e) { return mount(el('div', { class: 'login' }, el('h1', {}, 'Cannot reach DiQuizBuzz'), el('p', { class: 'muted' }, e.message))); }
-  window.QUICKZ_MAX_MEDIA_MB = st.max_media_mb || 50; window.QUICKZ_MAX_IMAGE_MB = st.max_image_mb || 2; window.QUICKZ_MAX_MUSIC_MB = st.max_music_mb || 5; window.QUICKZ_MAX_GIF_MB = st.max_gif_mb || 25;
+  window.QUICKZ_MAX_MEDIA_MB = st.max_media_mb || 50; window.QUICKZ_MAX_IMAGE_MB = st.max_image_mb || 2; window.QUICKZ_MAX_MUSIC_MB = st.max_music_mb || 5; window.QUICKZ_MAX_GIF_MB = st.max_gif_mb || 25; window.QUICKZ_IMAGE_HOSTS = st.image_hosts || [];
   if (st.setup_needed) return renderSetup();
   if (!st.user) return renderLogin();
   me = st.user;

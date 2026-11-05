@@ -37,6 +37,8 @@ async function renderEditor(id) {
   const status = { kind: quizId ? 'ok' : 'busy', text: quizId ? 'All changes saved' : 'Not saved yet' };
 
   const statusEl = el('button', { class: 'save-status btn ghost sm', type: 'button' });
+  const lookNote = el('div', { class: 'look-status', role: 'status', 'aria-live': 'polite' });          // the save state, shown inside the dialog where you are working
+  let lastSaveError = '';
   const lookBtn = el('button', { class: 'btn look-btn', type: 'button', onclick: lookDialog }), lookBtn2 = el('button', { class: 'btn look-btn wide', type: 'button', onclick: lookDialog });
   const title = el('input', { class: 'ed-title', type: 'text', value: quiz.title, maxLength: 120, 'aria-label': 'Quiz title', placeholder: 'Quiz title' });
   const hostBtn = el('button', { class: 'btn primary', type: 'button', onclick: hostNow }, icon('play'), 'Host this quiz');
@@ -55,6 +57,17 @@ async function renderEditor(id) {
     status.kind = kind; status.text = text;
     statusEl.className = 'save-status btn ghost sm ' + kind;
     statusEl.replaceChildren(icon(kind === 'ok' ? 'check' : kind === 'err' ? 'warn' : 'refresh'), text);
+    paintLookNote();
+  }
+  function paintLookNote() {
+    const probs = quizProblems(quiz);
+    let kind = status.kind, msg;
+    if (status.kind === 'ok') msg = 'Saved. Your changes are kept.';
+    else if (probs.length) { kind = 'err'; const p = probs[0]; msg = `Not saved yet: ${p.msgs[0]}${p.qi >= 0 ? ` (question ${p.qi + 1})` : ''}. Fix it, then your changes are saved.`; }
+    else if (status.kind === 'err') msg = `Not saved: ${status.text}`;
+    else msg = saving ? 'Saving…' : 'Saving in a moment…';
+    lookNote.className = 'look-status ' + kind;
+    lookNote.replaceChildren(icon(kind === 'ok' ? 'check' : kind === 'err' ? 'warn' : 'refresh'), el('span', {}, msg));
   }
   function refreshStatus() {
     const probs = quizProblems(quiz);
@@ -77,8 +90,12 @@ async function renderEditor(id) {
       if (!quizId) { const r = await api('/api/quizzes', { method: 'POST', body: payload }); quizId = String(r.id); history.replaceState(null, '', `#/quiz/${quizId}`); }
       else await api('/api/quizzes/' + quizId, { method: 'PUT', body: payload });
       dirty = false;
-    } catch (e) { saving = false; setStatus('err', e.message); return false; }
-    saving = false;
+    } catch (e) {
+      saving = false; setStatus('err', e.message);
+      if (e.message !== lastSaveError) { lastSaveError = e.message; ui.toast(`Your changes were not saved: ${e.message}`, 'error'); }          // never fail quietly
+      return false;
+    }
+    saving = false; lastSaveError = '';
     if (pending) { pending = false; if (dirty) return save(); }
     refreshStatus();
     return true;
@@ -98,9 +115,9 @@ async function renderEditor(id) {
     const setCover = url => { if (url === (quiz.cover || '')) return; quiz.cover = url; touch(); drawCover(); };
     const setBg = url => { if (url === (quiz.screen_bg || '')) return; quiz.screen_bg = url; touch(); drawCover(); };
     refreshLookBtn();
-    coverBox.replaceChildren(
+    coverBox.replaceChildren(...[
       el('label', { class: 'look-h' }, 'Cover picture', el('span', { class: 'faint' }, ' · shown on the quiz card in your library')),
-      pictureField({ value: quiz.cover || '', max: 1100, label: 'Drop a cover picture here, or click to browse', hint: `PNG, JPEG or WebP, up to ${window.QUICKZ_MAX_IMAGE_MB || 2} MB.`, onValue: (url, img) => { if (img === undefined) setCover(url); } }),
+      pictureField({ value: quiz.cover || '', max: 1100, label: 'Drop a cover picture here, or click to browse', hint: `PNG, JPEG, GIF or WebP, up to ${window.QUICKZ_MAX_IMAGE_MB || 2} MB.`, onValue: (url, img) => { if (img === undefined) setCover(url); } }),
       typeof aiCoverButton === 'function' ? aiCoverButton(quiz, setCover) : null,
       quiz.cover && quiz.cover !== quiz.screen_bg ? el('button', { class: 'btn sm', type: 'button', style: { alignSelf: 'flex-start' }, onclick: () => { setBg(quiz.cover); ui.toast('The cover is now also the projector background', 'success'); } }, icon('image'), 'Use this as the projector background too') : null,
       el('label', { class: 'look-h' }, 'Projector background', el('span', { class: 'faint' }, ' · behind the big screen')),
@@ -110,7 +127,8 @@ async function renderEditor(id) {
       typeof aiBackgroundButton === 'function' ? aiBackgroundButton(quiz, setBg) : null,
       quiz.screen_bg ? washPicker() : null,
       el('label', { class: 'look-h' }, 'Waiting-screen music', el('span', { class: 'faint' }, ' · plays until the quiz starts')),
-      musicField());
+      musicField(), lookNote].filter(Boolean));
+    paintLookNote();
   }
   /** How strongly the background picture shows: a soft wash over it keeps the words readable. */
   function washPicker() {

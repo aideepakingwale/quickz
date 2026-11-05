@@ -269,7 +269,8 @@ def create_app(settings: Settings, guard: auth.LoginGuard | None = None, cloud: 
     async def auth_state(request: Request):
         u = user_from_cookie(request.cookies)
         return {"setup_needed": db.count_users() == 0, "user": public_user(u) if u else None, "public_url": settings.public_url,
-                "max_media_mb": settings.max_media_mb, "max_image_mb": settings.max_image_mb, "max_music_mb": settings.max_music_mb, "max_gif_mb": settings.max_gif_mb}
+                "max_media_mb": settings.max_media_mb, "max_image_mb": settings.max_image_mb, "max_music_mb": settings.max_music_mb, "max_gif_mb": settings.max_gif_mb,
+                "image_hosts": sorted(questions_mod.IMAGE_HOSTS)}
 
     @app.post("/api/auth/setup")
     async def auth_setup(request: Request, response: Response):
