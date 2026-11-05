@@ -26,7 +26,7 @@ except ImportError:                       # not installed: big GIFs are refused 
     HAVE_PILLOW = False
 
 MAX_PIXELS_PER_FRAME = 9_000_000         # about 4K: refuse absurd canvases before decoding anything
-MAX_TOTAL_PIXELS = 80_000_000            # width x height x frames: bounds the time one shrink can take
+MAX_FRAMES_IN = 1500                     # more frames than this is not a picture, it is a video
 MAX_FRAMES_KEPT = 200
 MAX_SECONDS = 25.0                       # well inside the 60 seconds a CDN waits for the server
 FIRST_LONG_SIDE = 800                    # nothing on a phone or projector needs a bigger GIF than this
@@ -101,8 +101,10 @@ def shrink(data: bytes, target_bytes: int, steps=None, trace: list | None = None
         raise GifError("That GIF could not be read. Try saving it again.") from e
     if im.format != "GIF":
         raise GifError("That is not a GIF.")
-    if w * h > MAX_PIXELS_PER_FRAME or w * h * n > MAX_TOTAL_PIXELS:
-        raise GifError("This GIF is too large or long to shrink. Use a shorter or smaller one.")
+    if w * h > MAX_PIXELS_PER_FRAME:
+        raise GifError("This GIF is too large to shrink. Use a smaller one (up to about 3000 pixels wide).")
+    if n > MAX_FRAMES_IN:
+        raise GifError(f"This GIF has {n} frames, which is too long to shrink. Use a shorter one (up to {MAX_FRAMES_IN} frames).")      # the time limit below is what protects the server
     base = min(1.0, FIRST_LONG_SIDE / max(w, h))
     work = _geometry(w, h, 1.0, base)
 

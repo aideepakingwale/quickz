@@ -982,4 +982,5 @@ async function renderLive(code) {
   }
 }
 
+enableZoom(document.body);                                                      // uploaded pictures, previews and explanations can be viewed large
 boot();

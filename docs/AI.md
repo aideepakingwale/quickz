@@ -99,6 +99,7 @@ These are settings of the **quiz**, found in the editor under the quiz descripti
 
 - **Projector background.** Upload a picture (PNG, JPEG or WebP, up to 2 MB), or create one with **Create a background with AI**. The big screen scales it to cover the whole screen at any resolution and centres it, so the edges may be trimmed. Use a wide (16:9) picture with calm areas. A soft wash over it keeps the text readable.
 - **Picture strength.** Once a background picture is set, choose how strongly it shows: **Strong** (a soft wash keeps the words easiest to read), **Medium** (the default), **Light** or **None** (the picture as it is). Phones get a slightly stronger wash than the big screen. Words get a soft halo so they stay readable over a vivid picture. A GIF background animates like any other.
+- **The background fits any shape.** A wide (16:9) picture fills the screen. A square or portrait picture, or any shape that would lose a lot to cropping, is shown whole with a soft blurred copy of itself filling the sides, on the big screen and on phones (and it adjusts when a phone is turned). If you already set a cover, **Use this as the projector background too** copies it across in one click. The cover (shown on the quiz card in your library) and the projector background are two separate pictures.
 - **Waiting-screen music.** Upload one file: **MP3, M4A, OGG or WAV, up to 5 MB**. It loops on the big screen while players join and fades out when the quiz starts. It follows the screen's sound switch and volume, and (like all browser sound) starts after one click on the projector's sound button. Only use music you have the right to play.
 - **On players' phones** the same quiz settings carry over. While players wait, the phone shows the lobby description in a box that fits the screen and scrolls by itself when it is long, and plays the music (with its own **Music on / off** button; the choice is remembered on that phone). When the quiz starts, the description goes and the music fades out. The background picture stays behind the whole game, under a stronger wash so text stays easy to read. In the **Host** dialog, a switch **Waiting-screen music on phones** (on by default, shown only for quizzes that have music) lets you turn the phone music off when everyone is in the room with the big screen, so it plays from one place.
 - **Long lobby descriptions** no longer push the join code and player wall off the screen. The description gets the room left beside the QR code and scrolls slowly up and down by itself when it is longer than that (it pauses at each end, and stays still for people who ask their computer to reduce motion). The title shows on one line when there is a description.
@@ -123,3 +124,12 @@ API keys are encrypted with a master key taken from `QUICKZ_SECRET_KEY` if set, 
 - `quickz/static/js/ai.js`: the editor dialog and the admin page.
 - `tests/test_aimage.py`: pictures, with a fake picture service.
 - `tests/test_ai.py`: the network call is replaced by a fake, so the tests need no key or internet.
+
+## Viewing pictures large
+
+On phones and in the host console, any picture can be opened in a viewer: the question's picture, the pictures on answers, the explanation's picture, and the pictures you upload in the editor.
+
+- **Open it:** tap or click the picture, or the small magnifier in its corner. On an answer, only the magnifier opens it, so tapping the answer still picks it. The tiny pictures on ordering and matching cards are left alone, because they are dragged.
+- **Zoom and move:** pinch, double-tap, mouse wheel, or the **+ / −** and **Fit** buttons (keys **+**, **-**, **0**); drag to move around a zoomed picture.
+- **Full screen:** the **Full screen** button (where the browser allows it). **Esc** or the **X** closes it.
+- **Not for guessing games:** a question set to blur or zoom its picture during play cannot be opened until the answer is revealed, so the viewer cannot give the answer away. The big projector screen does not have the viewer.

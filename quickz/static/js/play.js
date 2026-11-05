@@ -46,6 +46,7 @@ async function start() {
     $('#snd').replaceChildren(icon(Sound.on ? 'volume' : 'mute'));
   });
   document.addEventListener('pointerdown', () => Sound.unlock(), { once: true });
+  enableZoom($('#stage'));                                                       // tap a picture (or its magnifier) to see it large
   document.addEventListener('pointerdown', () => PhoneMusic.retry());          // a phone may hold the music back until the first tap
 
   if (!code) { location.href = '/'; return; }

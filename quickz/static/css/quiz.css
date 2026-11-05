@@ -360,7 +360,11 @@ body.player .drift i { --o: .06; }
 .desc-box.scrolling .desc { animation: desc-scroll var(--dur, 14s) ease-in-out infinite alternate; will-change: transform; }
 @keyframes desc-scroll { 0%, 14% { transform: translateY(0); } 86%, 100% { transform: translateY(calc(var(--shift, 0px) * -1)); } }
 @media (prefers-reduced-motion: reduce) { .desc-box.scrolling .desc { animation: none; } }
-.screen-bg { position: fixed; inset: 0; z-index: 0; background-size: cover; background-position: center; background-repeat: no-repeat; animation: fade-up .6s var(--ease) both; }
+.screen-bg { position: fixed; inset: 0; z-index: 0; overflow: hidden; animation: fade-up .6s var(--ease) both; }
+.screen-bg > div { position: absolute; inset: 0; background-size: cover; background-position: center; background-repeat: no-repeat; }
+.screen-bg .bg-blur { display: none; filter: blur(28px) saturate(1.1); transform: scale(1.2); }
+.screen-bg.contain .bg-blur { display: block; }
+.screen-bg.contain .bg-main { background-size: contain; }
 .screen-bg::after { content: ''; position: absolute; inset: 0; background: color-mix(in srgb, var(--bg) calc(var(--wash, .4) * 100%), transparent); }      /* the host chooses how strongly the picture shows */
 body.has-bg .drift { display: none; }
 /* a light wash leaves little behind the words, so give them a soft halo that follows the theme */

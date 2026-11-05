@@ -117,15 +117,24 @@ def test_a_damaged_gif_is_refused_clearly_and_leaves_no_file(admin, app):
     assert {p.name for p in app.state.settings.uploads_dir.iterdir()} == before
 
 
-def test_absurdly_large_canvases_and_long_gifs_are_refused_without_decoding(monkeypatch):
+def test_absurdly_large_canvases_and_endless_gifs_are_refused_without_decoding(monkeypatch):
     huge = Image.new("P", (6000, 6000))
     buf = io.BytesIO()
     huge.save(buf, format="GIF")
-    with pytest.raises(gifshrink.GifError, match="too large or long"):
+    with pytest.raises(gifshrink.GifError, match="too large to shrink"):
         gifshrink.shrink(buf.getvalue(), 1000)
-    monkeypatch.setattr(gifshrink, "MAX_TOTAL_PIXELS", 100_000)           # 12 frames of 200 x 150 is 360,000
-    with pytest.raises(gifshrink.GifError, match="too large or long"):
+    monkeypatch.setattr(gifshrink, "MAX_FRAMES_IN", 5)
+    with pytest.raises(gifshrink.GifError, match="too long to shrink"):
         gifshrink.shrink(make_gif(frames=12, w=200, h=150, noise=10), 1000)
+
+
+def test_a_long_widescreen_gif_is_shrunk_not_refused():
+    """An ordinary 960 x 540 GIF with 160 frames is 83 million pixels in all: the old pixel budget refused it."""
+    data = make_gif(frames=160, w=960, h=540, noise=9000, seed=11)
+    assert len(data) > 2 * 1024 * 1024
+    result = gifshrink.shrink(data, int(2 * 1024 * 1024 * 0.97))
+    assert len(result["bytes"]) <= 2 * 1024 * 1024 and result["frames"] >= 40
+    assert info(result["bytes"])["animated"]
 
 
 def test_transparency_is_flattened_onto_white_and_a_static_gif_still_works():

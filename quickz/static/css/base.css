@@ -300,3 +300,24 @@ video.media-el { width: 100%; max-height: 38vh; background: #000; }
 #react-layer .fe { font-size: var(--fs, 3rem); line-height: 1; filter: drop-shadow(0 4px 8px rgba(0, 0, 0, .25)); }
 #react-layer .fe-name { max-width: 14em; padding: .2em .7em; border-radius: 999px; background: rgba(15, 23, 42, .82); color: #fff; font: 650 1.45rem/1.2 var(--font-ui, inherit); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-shadow: 0 2px 8px rgba(0, 0, 0, .25); }
 #react-layer .float-emoji.sm .fe-name { font-size: .78rem; }
+
+/* ---- picture viewer: see a picture large, zoom, move, full screen ---- */
+.zoom-btn { position: absolute; right: .45em; top: .45em; z-index: 3; width: 2rem; height: 2rem; display: grid; place-items: center; border-radius: 50%; background: rgba(15, 23, 32, .66); color: #fff; border: 1px solid rgba(255, 255, 255, .4); cursor: zoom-in; backdrop-filter: blur(4px); font-size: 1rem; line-height: 1; touch-action: manipulation; }
+.zoom-btn .icon { width: 1rem; height: 1rem; }
+.zoom-btn:hover, .zoom-btn:focus-visible { background: rgba(15, 23, 32, .88); }
+.pic .zoom-btn { top: auto; right: auto; bottom: .45em; left: .45em; }
+img.zoomable { cursor: zoom-in; }
+.viewer { position: fixed; inset: 0; z-index: 400; display: flex; flex-direction: column; background: rgba(8, 12, 18, .95); color: #fff; animation: fade-in .15s ease both; }
+.viewer-stage { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; cursor: zoom-in; }
+.viewer-stage.zoomed { cursor: grab; }
+.viewer-img { max-width: 100%; max-height: 100%; width: auto; height: auto; object-fit: contain; transform-origin: center center; will-change: transform; -webkit-user-drag: none; }
+.viewer-bar { position: absolute; left: 50%; bottom: calc(14px + env(safe-area-inset-bottom)); transform: translateX(-50%); display: flex; align-items: center; gap: .3rem; padding: .35rem .5rem; border-radius: 999px; background: rgba(30, 38, 48, .88); border: 1px solid rgba(255, 255, 255, .2); box-shadow: 0 10px 30px rgba(0, 0, 0, .45); }
+.viewer-btn, .viewer-close { width: 2.6rem; height: 2.6rem; display: grid; place-items: center; border-radius: 50%; border: 0; background: transparent; color: #fff; cursor: pointer; touch-action: manipulation; }
+.viewer-btn:hover:not(:disabled), .viewer-close:hover { background: rgba(255, 255, 255, .16); }
+.viewer-btn:disabled { opacity: .35; cursor: default; }
+.viewer-btn:focus-visible, .viewer-close:focus-visible { outline: 2px solid #8fb2ff; outline-offset: 2px; }
+.viewer-pct { min-width: 3.2rem; text-align: center; font: 650 .85rem var(--font-ui, system-ui); font-variant-numeric: tabular-nums; }
+.viewer-close { position: absolute; top: calc(10px + env(safe-area-inset-top)); right: 12px; background: rgba(30, 38, 48, .88); border: 1px solid rgba(255, 255, 255, .2); }
+.viewer-cap { position: absolute; left: 0; right: 0; top: calc(14px + env(safe-area-inset-top)); text-align: center; padding: 0 4rem; font-size: .9rem; opacity: .85; pointer-events: none; }
+body.viewer-open { overflow: hidden; }
+@media (prefers-reduced-motion: reduce) { .viewer { animation: none; } }

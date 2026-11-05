@@ -136,7 +136,7 @@ function mediaPlayer(media, { controls = true, big = false, onEnded = null, auto
 
 /* ---------------------------------------------------------------- icons */
 const ICONS = {
-  check: '<path d="M20 6 9 17l-5-5"/>', x: '<path d="M18 6 6 18M6 6l12 12"/>', plus: '<path d="M12 5v14M5 12h14"/>', minus: '<path d="M5 12h14"/>',
+  check: '<path d="M20 6 9 17l-5-5"/>', x: '<path d="M18 6 6 18M6 6l12 12"/>', minus: '<path d="M5 12h14"/>', plus: '<path d="M12 5v14M5 12h14"/>', minus: '<path d="M5 12h14"/>',
   trash: '<path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v5M14 11v5"/>',
   key: '<circle cx="8" cy="15" r="4"/><path d="m11 12 9-9M16 7l3 3M14 9l2 2"/>',
   jigsaw: '<path d="M10 4a2 2 0 1 1 4 0v2h4a1 1 0 0 1 1 1v4h-2a2 2 0 1 0 0 4h2v4a1 1 0 0 1-1 1h-4v-2a2 2 0 1 0-4 0v2H6a1 1 0 0 1-1-1v-4h2a2 2 0 1 0 0-4H5V7a1 1 0 0 1 1-1h4z"/>',
@@ -589,7 +589,16 @@ function countUp(node, to, { from = 0, ms = 900, fmt = fmtScore } = {}) {
 }
 
 /** The quiz's background picture fills the whole screen at any resolution (scaled to cover, centred), under a soft wash so the text stays readable. */
-let bgNow = null;
+let bgNow = null, bgRatio = 0;
+/** A wide picture fills the screen. One that would lose too much to cropping (a square or portrait picture on a wide screen, or the other way round)
+ *  is shown whole instead, with a soft blurred copy of itself filling the rest. */
+function fitBackground() {
+  const layer = document.querySelector('.screen-bg');
+  if (!layer || !bgRatio) return;
+  const screen = innerWidth / Math.max(1, innerHeight);
+  layer.classList.toggle('contain', 1 - Math.min(bgRatio, screen) / Math.max(bgRatio, screen) > 0.25);
+}
+addEventListener('resize', fitBackground);
 function applyBackground(url, wash) {
   url = url || '';
   const washNow = (Number.isFinite(Number(wash)) && wash !== '' && wash != null ? Math.max(0, Math.min(85, Number(wash))) : 40) / 100 + (document.body.classList.contains('player') ? 0.1 : 0);      // a phone is held closer, so a little more wash
@@ -600,11 +609,147 @@ function applyBackground(url, wash) {
   if (!url) { layer?.remove(); document.body.classList.remove('has-bg'); return; }
   const done = () => {
     if (!layer) { layer = el('div', { class: 'screen-bg', 'aria-hidden': 'true' }); document.body.prepend(layer); }
-    layer.style.backgroundImage = `url("${url.replace(/"/g, '%22')}")`;
+    const css = `url("${url.replace(/"/g, '%22')}")`;
+    layer.replaceChildren(el('div', { class: 'bg-blur', style: { backgroundImage: css } }), el('div', { class: 'bg-main', style: { backgroundImage: css } }));
+    bgRatio = probe.naturalWidth / Math.max(1, probe.naturalHeight);
     layer.style.setProperty('--wash', String(Math.min(0.9, washNow)));
     document.body.classList.add('has-bg');
+    fitBackground();
   };
   const probe = new Image();                                // show it only once it has loaded, so there is no flash of an empty frame
   probe.onload = done; probe.onerror = () => { bgNow = null; };
   probe.src = url;
+}
+
+/* ---------------------------------------------------------------- picture viewer
+   Tap or click a picture (a question's, an answer's, an explanation's, or one you uploaded) to see it large: pinch, double-tap, mouse wheel
+   or the buttons to zoom, drag to move around, and a full-screen button. The big projector screen does not use this. */
+function openViewer(src, alt = '') {
+  if (!src || document.querySelector('.viewer')) return;
+  const opener = document.activeElement;
+  let scale = 1, tx = 0, ty = 0, pinch = null, drag = null, lastTap = 0, moved = false;
+  const pts = new Map();
+  const img = el('img', { class: 'viewer-img', src, alt: alt || 'Picture', draggable: false });
+  const stage = el('div', { class: 'viewer-stage' }, img);
+  const pct = el('span', { class: 'viewer-pct', 'aria-live': 'polite' }, '100%');
+  const limits = () => ({ x: Math.max(0, (img.offsetWidth * scale - stage.clientWidth) / 2), y: Math.max(0, (img.offsetHeight * scale - stage.clientHeight) / 2) });
+  const apply = () => {
+    const L = limits(); tx = Math.max(-L.x, Math.min(L.x, tx)); ty = Math.max(-L.y, Math.min(L.y, ty));
+    img.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
+    stage.classList.toggle('zoomed', scale > 1.01); pct.textContent = Math.round(scale * 100) + '%';
+    out.disabled = scale <= 1.01; fit.disabled = scale <= 1.01; into.disabled = scale >= 8;
+  };
+  /** Zoom to `s`, keeping the point under the finger or cursor where it is. */
+  const zoomTo = (s, cx = stage.clientWidth / 2, cy = stage.clientHeight / 2) => {
+    s = Math.max(1, Math.min(8, s));
+    const k = s / scale, ox = cx - stage.clientWidth / 2, oy = cy - stage.clientHeight / 2;
+    tx = ox - (ox - tx) * k; ty = oy - (oy - ty) * k; scale = s;
+    if (scale <= 1.01) { scale = 1; tx = 0; ty = 0; }
+    apply();
+  };
+  const at = e => { const r = stage.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+  const btn = (label, ic, onclick) => el('button', { class: 'viewer-btn', type: 'button', 'aria-label': label, title: label, onclick }, icon(ic));
+  const into = btn('Zoom in', 'plus', () => zoomTo(scale * 1.5)), out = btn('Zoom out', 'minus', () => zoomTo(scale / 1.5)), fit = btn('Fit to screen', 'refresh', () => zoomTo(1));
+  const root = el('div', { class: 'viewer', role: 'dialog', 'aria-modal': 'true', 'aria-label': alt ? `Picture: ${alt}` : 'Picture viewer' });
+  const fsSupported = !!(root.requestFullscreen || root.webkitRequestFullscreen);
+  const isFull = () => !!(document.fullscreenElement || document.webkitFullscreenElement);
+  const full = fsSupported ? btn('Full screen', 'expand', () => {
+    if (isFull()) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+    else { const p = (root.requestFullscreen || root.webkitRequestFullscreen).call(root); if (p && p.catch) p.catch(() => { /* the browser said no: the viewer already fills the page */ }); }
+  }) : null;
+  const close = () => {
+    document.removeEventListener('keydown', onKey, true);
+    if (isFull()) { try { (document.exitFullscreen || document.webkitExitFullscreen).call(document); } catch (e) { /* already out */ } }
+    root.remove(); document.body.classList.remove('viewer-open');
+    if (opener && opener.focus && document.contains(opener)) opener.focus();
+  };
+  const closeBtn = el('button', { class: 'viewer-close', type: 'button', 'aria-label': 'Close', title: 'Close (Esc)', onclick: close }, icon('x'));
+  const bar = el('div', { class: 'viewer-bar', role: 'toolbar', 'aria-label': 'Picture controls' }, out, pct, into, fit, full);
+  root.append(stage, bar, closeBtn, alt ? el('div', { class: 'viewer-cap' }, alt) : null);
+  const onKey = e => {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
+    else if (e.key === '+' || e.key === '=') { e.preventDefault(); zoomTo(scale * 1.5); }
+    else if (e.key === '-' || e.key === '_') { e.preventDefault(); zoomTo(scale / 1.5); }
+    else if (e.key === '0') { e.preventDefault(); zoomTo(1); }
+    else if (e.key.startsWith('Arrow') && scale > 1) { e.preventDefault(); const d = 60; if (e.key === 'ArrowLeft') tx += d; else if (e.key === 'ArrowRight') tx -= d; else if (e.key === 'ArrowUp') ty += d; else ty -= d; apply(); }
+    else if (e.key === 'Tab') {                                                      // keep the focus inside the viewer
+      const items = [...root.querySelectorAll('button:not([disabled])')]; if (!items.length) return;
+      const first = items[0], last = items[items.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); } else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    }
+  };
+  stage.addEventListener('wheel', e => { e.preventDefault(); const [x, y] = at(e); zoomTo(scale * (e.deltaY < 0 ? 1.18 : 1 / 1.18), x, y); }, { passive: false });
+  stage.addEventListener('pointerdown', e => {
+    stage.setPointerCapture(e.pointerId); pts.set(e.pointerId, { x: e.clientX, y: e.clientY }); moved = false;
+    if (pts.size === 2) { const [a, b] = [...pts.values()]; pinch = { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, s: scale }; drag = null; }
+    else drag = { x: e.clientX, y: e.clientY, tx, ty };
+  });
+  stage.addEventListener('pointermove', e => {
+    if (!pts.has(e.pointerId)) return;
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pts.size === 2 && pinch) {
+      const [a, b] = [...pts.values()], r = stage.getBoundingClientRect(); moved = true;
+      zoomTo(pinch.s * Math.hypot(a.x - b.x, a.y - b.y) / pinch.d, (a.x + b.x) / 2 - r.left, (a.y + b.y) / 2 - r.top);
+    } else if (drag && scale > 1.01) {
+      if (Math.abs(e.clientX - drag.x) + Math.abs(e.clientY - drag.y) > 4) moved = true;
+      tx = drag.tx + e.clientX - drag.x; ty = drag.ty + e.clientY - drag.y; apply();
+    }
+  });
+  const release = e => {
+    const wasOne = pts.size === 1; pts.delete(e.pointerId);
+    if (pts.size < 2) pinch = null;
+    if (pts.size === 1) { const [p] = [...pts.values()]; drag = { x: p.x, y: p.y, tx, ty }; } else drag = null;
+    if (wasOne && !moved && e.type === 'pointerup') {                                // a tap: double-tap toggles the zoom, a tap on the dark area closes
+      const now = Date.now();
+      if (now - lastTap < 320) { const [x, y] = at(e); zoomTo(scale > 1.01 ? 1 : 2.5, x, y); lastTap = 0; }
+      else { lastTap = now; if (e.target === stage && scale <= 1.01) setTimeout(() => { if (lastTap && Date.now() - lastTap >= 300 && root.isConnected) close(); }, 330); }
+    }
+  };
+  stage.addEventListener('pointerup', release); stage.addEventListener('pointercancel', release);
+  document.addEventListener('keydown', onKey, true);
+  addEventListener('resize', apply);
+  document.body.classList.add('viewer-open'); document.body.append(root);
+  apply(); closeBtn.focus({ preventScroll: true });
+}
+
+/** The small magnifier on a picture. A span (not a button) so it can sit inside an answer tile without nesting buttons. */
+function zoomControl(src, alt = '') {
+  const open = e => { e.preventDefault(); e.stopPropagation(); openViewer(src, alt); };
+  const c = el('span', { class: 'zoom-btn', role: 'button', tabindex: '0', 'aria-label': alt ? `View larger: ${alt}` : 'View picture larger', title: 'View larger' }, icon('expand'));
+  ['pointerdown', 'mousedown', 'touchstart'].forEach(t => c.addEventListener(t, e => e.stopPropagation()));           // never counts as picking the answer underneath
+  c.addEventListener('click', open);
+  c.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') open(e); });
+  return c;
+}
+
+const ZOOM_PICTURES = '.qv-img img, .o-pic img, .explain img, .next-up img, .pic img, .callout img';       // question, answer, explanation and uploaded pictures
+const ZOOM_SKIP = '.viewer, .pin-stage, .jig-board, .jig-stage, .jig-solved, .screen-bg';
+function decorateZoom(root = document) {
+  root.querySelectorAll(ZOOM_PICTURES).forEach(img => {
+    if (img.dataset.zoom || img.closest(ZOOM_SKIP) || !img.getAttribute('src')) return;
+    if (img.closest('.qv-img[data-fx]')) return;                         // a "guess the picture" question must not be zoomed to the clear picture mid-question
+    const box = img.parentElement;
+    if (!box) return;
+    if (!img.complete || !img.naturalWidth) { img.addEventListener('load', () => decorateZoom(root), { once: true }); return; }       // measure it once it has loaded
+    const wide = (img.offsetWidth || 0) >= 110, tile = !!img.closest('.opt, button, label, .ord-item, .mt-item, .seq-row');
+    if (!wide && tile && (img.offsetWidth || 0) < 56) return;            // tiny ordering and matching cards are drag targets: leave them alone
+    if (!wide && tile) { img.dataset.zoom = '1'; return; }              // an answer tile's small picture: no button to cover it, and the tile keeps meaning "pick this"
+    img.dataset.zoom = '1';
+    const alt = img.alt === 'Picture' ? '' : img.alt, src = () => img.currentSrc || img.src;
+    if (wide) {                                                          // a magnifier in the corner; inside an answer tile it never picks the answer
+      if (getComputedStyle(box).position === 'static') box.style.position = 'relative';
+      box.classList.add('has-zoom'); box.append(zoomControl(src(), alt));
+    }
+    if (!tile) {                                                         // a free-standing picture (an answer tile keeps meaning "pick this") opens when it is clicked too
+      img.classList.add('zoomable'); img.title = img.title || 'Click to view larger';
+      img.addEventListener('click', () => openViewer(src(), alt));
+    }
+  });
+}
+/** Keep every picture under `root` zoomable as the page redraws itself. */
+function enableZoom(root) {
+  let timer = null;
+  const run = () => { timer = null; decorateZoom(root); };
+  new MutationObserver(() => { if (!timer) timer = setTimeout(run, 120); }).observe(root, { childList: true, subtree: true, attributes: true, attributeFilter: ['src', 'data-fx'] });
+  decorateZoom(root);
 }
